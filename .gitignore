@@ -1,0 +1,17 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# macOS
+.DS_Store
+
+# Whisper model cache (large binary — pre-download at home, don't commit)
+# ~/.cache/whisper is outside the repo anyway, but just in case
+*.pt

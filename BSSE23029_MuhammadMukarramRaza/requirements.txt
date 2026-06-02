@@ -1,0 +1,22 @@
+# Official Pre-Exam install list (run at HOME, you have no internet on exam day).
+# One command:
+#   pip install gradio openai opencv-python Pillow openai-whisper SpeechRecognition PyAudio sounddevice soundfile pydub numpy requests python-dotenv
+#
+# If PyAudio fails on Windows:   pip install pipwin   then   pipwin install pyaudio
+# Also required (system-level, NOT pip):  ffmpeg      (winget install ffmpeg)
+# Also required:  Ollama  + `ollama pull llama3`  + whisper 'base' model cached.
+# (PyYAML is pulled in automatically by gradio; config.json is the fallback.)
+
+gradio
+openai
+opencv-python
+Pillow
+openai-whisper
+SpeechRecognition
+PyAudio
+sounddevice
+soundfile
+pydub
+numpy
+requests
+python-dotenv
