@@ -89,7 +89,7 @@ def build_app():
         status = gr.Markdown(ollama_status())
 
         with gr.Tab("💬 Chat"):
-            chatbot = gr.Chatbot(type="messages", height=380)
+            chatbot = gr.Chatbot(height=380)
             with gr.Row():
                 msg = gr.Textbox(placeholder="Type a message and press Enter...",
                                  scale=8, show_label=False)
@@ -98,7 +98,7 @@ def build_app():
             send.click(chat_fn, [msg, chatbot], [chatbot, msg])
 
         with gr.Tab("🎙️ Voice"):
-            voice_chat = gr.Chatbot(type="messages", height=300)
+            voice_chat = gr.Chatbot(height=300)
             mic = gr.Audio(sources=["microphone"], type="numpy", label="Speak")
             transcript = gr.Markdown()
             gr.Button("Transcribe + Send", variant="primary").click(

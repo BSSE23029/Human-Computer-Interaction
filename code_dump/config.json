@@ -1,0 +1,117 @@
+{
+    "inputs": {
+        "webcam_index": 0,
+        "wait_key_play_ms": 30,
+        "wait_key_pause_ms": 100
+    },
+    "mediapipe": {
+        "face_max_num_faces": 1,
+        "face_refine_landmarks": true,
+        "hands_max_num_hands": 2,
+        "hands_min_detection_confidence": 0.7
+    },
+    "math_rules": {
+        "lips_mar_open": 0.55,
+        "lips_mar_closed": 0.35,
+        "lips_smile_face_ratio": 0.35,
+        "eyes_ear_closed": 0.25,
+        "eyes_drowsy_frame_trigger": 20,
+        "eyes_awake_frame_recovery": 5,
+        "face_mood_history_seconds": 5.0,
+        "face_mood_history_maxlen": 150,
+        "deepface_worker_timeout": 0.5,
+        "deepface_static_timeout": 5.0,
+        "head_pose_deadzone_ratio": 0.05,
+        "hand_target_hold_time_seconds": 1.0,
+        "hand_high_five_y_ratio": 0.5
+    },
+    "output_decisions": {
+        "texts": {
+            "smiling": "Smiling 😊",
+            "neutral": "Neutral 😐",
+            "drowsy_warning": "DROWSY! Wake Up!",
+            "unknown_emotion": "Unknown",
+            "loading_emotion": "Loading...",
+            "head_pose_up": "Up",
+            "head_pose_down": "Down",
+            "head_pose_left": "Left",
+            "head_pose_right": "Right",
+            "head_pose_forward": "Forward",
+            "pipeline_controls_video": "[SPACE] Pause/Play  [R] Replay  [C] Reload Config  [ESC] Exit",
+            "pipeline_controls_cam": "[C] Reload Config  [ESC] Exit"
+        },
+        "emojis": {
+            "Fist": "✊",
+            "One": "☝️",
+            "Peace": "✌️",
+            "Three": "3️⃣",
+            "Four": "4️⃣",
+            "Open Hand": "🖐",
+            "Thumbs Up": "👍",
+            "High Five": "🙌",
+            "Unknown": "❓"
+        },
+        "colors_bgr": {
+            "ui_text_default": [
+                0,
+                255,
+                0
+            ],
+            "ui_text_bg": [
+                0,
+                0,
+                0
+            ],
+            "ui_text_white": [
+                255,
+                255,
+                255
+            ],
+            "warning": [
+                0,
+                0,
+                255
+            ],
+            "highlight_yellow": [
+                0,
+                255,
+                255
+            ],
+            "highlight_magenta": [
+                255,
+                0,
+                255
+            ],
+            "face_box": [
+                255,
+                0,
+                0
+            ],
+            "landmark_green": [
+                0,
+                255,
+                0
+            ],
+            "landmark_blue": [
+                255,
+                0,
+                0
+            ],
+            "landmark_red": [
+                0,
+                0,
+                255
+            ]
+        },
+        "ui_settings": {
+            "font_scale": 0.7,
+            "thickness": 2,
+            "warning_font_scale": 1.2,
+            "warning_thickness": 3,
+            "mar_box_thickness": 10,
+            "drowsy_box_height": 100,
+            "gesture_progress_bar_max_width": 200,
+            "gesture_progress_bar_height": 20
+        }
+    }
+}
