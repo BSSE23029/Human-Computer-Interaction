@@ -121,11 +121,6 @@ def process_turn(
 
     state.add_response(reply)
 
-    # ── 5. auto-report on last turn ───────────────────────────────
-    if max_turns > 0 and state.n_turns >= max_turns and get("session.auto_report", True):
-        from text.report import generate_report
-        generate_report(state)
-
     return {
         "turn":         turn["turn"],
         "text":         text,

@@ -27,7 +27,7 @@
       "multilabel": "From these labels: {labels}, list ALL that apply.\nReply with ONLY a comma-separated list of labels, nothing else.\nMessage: {text}\nLabels:",
       "score": "Rate the {criterion} of this message on a scale from {lo} to {hi}.\nReply with ONLY a number, nothing else.\nMessage: {text}\nNumber:",
       "extract": "Extract these fields and reply with ONLY a valid JSON object using exactly these keys: {fields}.\nMessage: {text}\nJSON:",
-      "respond": "You are {persona}.\nContext — emotional tier: {tier}, support category: {category}.\nRespond to the following message in 1-3 empathetic sentences:\n{text}",
+      "respond": "{persona}\nContext — emotional tier: {tier}, support category: {category}.\nRespond to the following message in 1-3 empathetic sentences:\n{text}",
       "summarize": "Summarize the conversation below in about {max_words} words for {audience}.\nConversation:\n{conversation}\nSummary:"
     }
   },
@@ -205,8 +205,25 @@
         "sleep",
         "sad",
         "struggling",
-        "hopeless",
-        "exhausted"
+        "exhausted",
+        "burden",
+        "cope",
+        "coping",
+        "someone",
+        "talk",
+        "feelings",
+        "mental",
+        "upset",
+        "numb",
+        "empty",
+        "lost",
+        "broken",
+        "hurt",
+        "hard",
+        "difficult",
+        "tough",
+        "low",
+        "dark"
       ]
     },
     "FINANCIAL": {
@@ -258,6 +275,7 @@
       "response_priority": 2,
       "keywords": [
         "friends",
+        "friend",
         "roommate",
         "belong",
         "isolated",
@@ -270,7 +288,11 @@
         "excluded",
         "peer",
         "social",
-        "connection"
+        "connection",
+        "classmate",
+        "colleague",
+        "nobody",
+        "no one"
       ]
     },
     "ADMIN": {
@@ -373,6 +395,9 @@
     "verbose_threshold": 20,
     "verbose_bonus": 5,
     "tier_weights": {
+      "THRIVING": 0,
+      "CONTENT": 0,
+      "NEUTRAL": 0,
       "STRESSED": 5,
       "DISTRESSED": 10,
       "CRISIS": 15

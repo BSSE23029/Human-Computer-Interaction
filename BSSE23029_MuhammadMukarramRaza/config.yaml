@@ -293,8 +293,9 @@ categories:
     escalation_target: false
     response_priority: 2
     keywords:
-      [friends, roommate, belong, isolated, group, relationship, community,
-       alone, bully, harassed, excluded, peer, social, connection]
+      [friends, friend, roommate, belong, isolated, group, relationship,
+       community, alone, bully, harassed, excluded, peer, social,
+       connection, classmate, colleague, nobody, no one]
 
   ADMIN:
     escalation_target: false
@@ -395,10 +396,12 @@ scoring:
   verbose_bonus: 5
 
   tier_weights:                # risk points added PER TURN at that tier
-    STRESSED: 5                # remove a tier → its turns contribute 0 points
+    THRIVING: 0                # set negative (e.g. -5) to reward positive turns
+    CONTENT: 0
+    NEUTRAL: 0
+    STRESSED: 5                # remove a tier or set 0 → that tier contributes nothing
     DISTRESSED: 10
     CRISIS: 15
-    # THRIVING: -5             # add negative weights to reward positive turns
 
   thresholds:                  # action assigned to the highest threshold the score clears
     URGENT_REFERRAL: 70        # risk ≥ 70 → URGENT_REFERRAL

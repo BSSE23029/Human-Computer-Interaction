@@ -71,6 +71,7 @@ def run_replay_from_config(use_llm_response: bool = False) -> SessionState:
     """
     log   = get("replay.log") or []
     ppt   = bool(get("replay.print_per_turn", True))
+    # report.print is controlled here, NOT inside process_turn (avoids double-print)
     rpt   = bool(get("replay.print_report", True))
 
     if not log:

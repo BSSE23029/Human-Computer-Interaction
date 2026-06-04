@@ -68,7 +68,7 @@ def assess(text: str, use_llm: bool = False) -> dict:
     (via llm.classify against the tier names).
     """
     if not enabled("scale"):
-        # ask llama3 to name the tier directly
+        # scale fully disabled — ask llama3 to name the tier directly
         try:
             from core.llm import classify as llm_classify
             tier_names = [row[0] for row in (get("scale.tiers") or [])]
@@ -79,7 +79,9 @@ def assess(text: str, use_llm: bool = False) -> dict:
         except Exception:
             return {"tier": "NEUTRAL", "score": 0.0, "emoji": "😐", "is_at_risk": False}
 
-    score = score_llm(text) if use_llm else score_text(text)
+    # sentiment.enabled=False  →  use LLM scorer instead of lexicon
+    use_llm_score = use_llm or not enabled("sentiment")
+    score = score_llm(text) if use_llm_score else score_text(text)
     return to_tier(score)
 
 
