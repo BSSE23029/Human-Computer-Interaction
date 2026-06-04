@@ -526,7 +526,7 @@
     "webcam_index": 0,
     "flip_webcam": true,
     "wait_key_ms": 1,
-    "backend": "auto",
+    "backend": "dnn",
     "detect_every_n": 3,
     "detect_scale": 0.5,
     "mediapipe": {
@@ -550,6 +550,7 @@
       "alert_message": "DROWSY! Wake up!"
     },
     "lip": {
+      "enabled": true,
       "classifier": "fuzzy",
       "mar_threshold_a": 0.5,
       "mar_threshold_e": 0.22,

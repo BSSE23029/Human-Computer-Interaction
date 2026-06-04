@@ -183,8 +183,9 @@ def _vision_worker():
                 _det["face_landmarks"] = get_face_landmarks(frame)
 
                 # vowel / lip reading — reuses already-computed landmarks
-                if (BACKEND == "mediapipe" and _det["face_landmarks"]
-                        and get("vision.lip.classifier", "fuzzy")):
+                if (BACKEND == "mediapipe"
+                        and bool(get("vision.lip.enabled", True))
+                        and _det["face_landmarks"]):
                     try:
                         lm = _det["face_landmarks"][0].landmark
                         _det["vowel"]      = _lip.update(lm, w, h)

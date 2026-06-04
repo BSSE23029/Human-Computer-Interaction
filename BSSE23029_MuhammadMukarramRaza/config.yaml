@@ -789,6 +789,7 @@ vision:
   # ── Lip reading / vowel classification (reference guide section 3)
   # classifier: "simple" (fast threshold logic) | "fuzzy" (Gaussian profiles, highest accuracy)
   lip:
+    enabled: true              # false = skip lip/vowel detection entirely
     classifier: "fuzzy"            # "simple" or "fuzzy"
     mar_threshold_a: 0.50          # A:  MAR > 0.50  (jaw dropped fully)
     mar_threshold_e: 0.22          # E:  MAR > 0.22 AND width > 0.42

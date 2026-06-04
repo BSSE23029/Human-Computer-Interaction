@@ -1,13 +1,23 @@
 .
 ├── CHEATSHEET.md
+├── MODIFICATION_GUIDE.md
+├── PROJECT_SUMMARY.md
 ├── README.md
 ├── __pycache__
+│   ├── app.cpython-311.pyc
+│   └── exam_adapter.cpython-311.pyc
 ├── app.py
 ├── config.json
 ├── config.yaml
 ├── core
 │   ├── __init__.py
 │   ├── __pycache__
+│   │   ├── __init__.cpython-311.pyc
+│   │   ├── conf.cpython-311.pyc
+│   │   ├── executor.cpython-311.pyc
+│   │   ├── llm.cpython-311.pyc
+│   │   ├── provider.cpython-311.pyc
+│   │   └── state.cpython-311.pyc
 │   ├── conf.py
 │   ├── executor.py
 │   ├── llm.py
@@ -20,6 +30,10 @@
 ├── pipeline
 │   ├── __init__.py
 │   ├── __pycache__
+│   │   ├── __init__.cpython-311.pyc
+│   │   ├── replay.cpython-311.pyc
+│   │   ├── stages.cpython-311.pyc
+│   │   └── turn.cpython-311.pyc
 │   ├── replay.py
 │   ├── stages.py
 │   └── turn.py
@@ -28,6 +42,14 @@
 ├── text
 │   ├── __init__.py
 │   ├── __pycache__
+│   │   ├── __init__.cpython-311.pyc
+│   │   ├── classify.cpython-311.pyc
+│   │   ├── preprocess.cpython-311.pyc
+│   │   ├── report.cpython-311.pyc
+│   │   ├── respond.cpython-311.pyc
+│   │   ├── scale.cpython-311.pyc
+│   │   ├── sentiment.cpython-311.pyc
+│   │   └── trajectory.cpython-311.pyc
 │   ├── classify.py
 │   ├── preprocess.py
 │   ├── report.py
@@ -38,6 +60,16 @@
 ├── vision
 │   ├── __init__.py
 │   ├── __pycache__
+│   │   ├── __init__.cpython-311.pyc
+│   │   ├── backend.cpython-311.pyc
+│   │   ├── bridge.cpython-311.pyc
+│   │   ├── camera.cpython-311.pyc
+│   │   ├── color_motion.cpython-311.pyc
+│   │   ├── draw.cpython-311.pyc
+│   │   ├── faces.cpython-311.pyc
+│   │   ├── hands.cpython-311.pyc
+│   │   ├── lips.cpython-311.pyc
+│   │   └── smoothing.cpython-311.pyc
 │   ├── backend.py
 │   ├── bridge.py
 │   ├── camera.py
@@ -50,6 +82,12 @@
 └── voice
     ├── __init__.py
     ├── __pycache__
+    │   ├── __init__.cpython-311.pyc
+    │   ├── audio_io.cpython-311.pyc
+    │   ├── capture.cpython-311.pyc
+    │   └── stt.cpython-311.pyc
     ├── audio_io.py
     ├── capture.py
     └── stt.py
+
+13 directories, 78 files
