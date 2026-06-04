@@ -641,3 +641,324 @@ ui:
   app_subtitle: "Text + Voice + Vision  |  llama3 (Ollama) + Whisper + OpenCV"
   server_port: 7860
   share: false   # true = create a public gradio.live link (needs internet — exam-day: false)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 18. PIPELINE — global stage definitions
+#
+#  Each entry defines ONE stage capability.
+#  Tab contexts (section 19) reference stages by name and override fields.
+#
+#  Stage schema:
+#    name       unique identifier — referenced in pipeline_order and depends_on
+#    type       maps to an executor function in pipeline/stages.py
+#    enabled    default enabled state (overridden per-tab)
+#    method     which backend runs (overridden per-tab)
+#    fallback:
+#      on       when to trigger: "failure" | "disabled" | "empty" | "no_match"
+#      method   try this backend next
+#      value    inject this literal value if all methods fail (null = _skipped marker)
+#    config     stage-specific extra config (not inherited)
+#
+#  NOTE: "enabled: false" does NOT skip the stage silently.
+#        The executor writes the fallback value WITH _skipped: true
+#        so dependent stages can detect and adjust. See executor.py.
+# ─────────────────────────────────────────────────────────────────────
+stages:
+
+  # ── INPUT STAGES ──────────────────────────────────────────────────
+
+  - name: stt
+    type: voice_input
+    enabled: true
+    method: whisper             # whisper | sr_whisper
+    fallback:
+      on: failure
+      value: {text: "", language: "?", confidence: "low"}
+                                # empty transcript — pipeline continues without crashing
+
+  - name: text_input
+    type: text_input
+    enabled: true
+    method: direct
+    fallback:
+      on: empty
+      value: {text: ""}
+
+  - name: vision_input
+    type: vision_input
+    enabled: true              # off by default; vision + multimodal tabs override
+    method: bridge
+    fallback:
+      on: failure
+      value: {present: false, mood: "no_face", gesture: "none", head_zone: null}
+
+  # ── FUSER ─────────────────────────────────────────────────────────
+  # Resolves multiple active inputs into one text payload.
+  # In single-input tabs this is a transparent pass-through.
+
+  - name: fuser
+    type: fuser
+    enabled: true
+    method: auto_priority
+    fallback:
+      on: no_input
+      method: silent            # produce empty payload; no crash
+    config:
+      priority: [voice, text, vision]  # first source with content wins
+      no_input_behavior: warn          # warn | hide_tab | error_message | disable_send
+
+  # ── CONTEXT INJECTOR ──────────────────────────────────────────────
+  # Attaches camera data to the turn before analysis runs.
+
+  - name: context_inject
+    type: context_injector
+    enabled: true              # enabled per-tab when vision is on
+    method: context             # context | score | primary | annotate
+    fallback:
+      on: failure
+      value: {injected: false}
+    config:
+      score_weights:            # used when method: score
+        smiling:        0.30
+        neutral:        0.00
+        no_face:       -0.10
+        drowsy:        -0.40
+
+  # ── ANALYSIS STAGES ───────────────────────────────────────────────
+  # INTERDEPENDENCY: sentiment → scale (score flows down)
+  #                 classify  → trajectory (support_log flows down)
+  # If a stage is disabled its _skipped=True marker travels to dependents.
+
+  - name: sentiment
+    type: analyzer
+    enabled: true
+    method: lexicon             # lexicon | llm | hybrid
+    fallback:
+      on: failure
+      method: llm               # if lexicon crashes → LLM scores
+      value: {compound: 0.0, pos: 0.0, neg: 0.0, neu: 1.0}
+
+  - name: scale
+    type: tier_mapper
+    enabled: true
+    method: formula
+    fallback:
+      on: failure
+      method: llm               # if formula fails → LLM names the tier
+      value: {tier: "NEUTRAL", score: 0.0, emoji: "😐", is_at_risk: false}
+                                # if sentiment was _skipped → scale uses LLM automatically
+
+  - name: classify
+    type: classifier
+    enabled: true
+    method: keyword             # keyword | llm | keyword_then_llm
+    fallback:
+      on: no_match
+      method: llm               # no keyword hits → let LLM classify
+      value: {primary: "GENERAL", all_detected: [], scores: {}}
+
+  - name: trajectory
+    type: tracker
+    enabled: true
+    method: halves
+    fallback:
+      on: insufficient_data     # fewer than 2 turns in session
+      value: {trend: "unknown", lowest_tier: null, at_risk_turns: []}
+                                # if classify was _skipped → transition detection skipped automatically
+
+  # ── RESPONDER ─────────────────────────────────────────────────────
+
+  - name: respond
+    type: responder
+    enabled: true
+    method: rule_then_llm       # rule_only | llm_only | rule_then_llm
+    fallback:
+      on: all_fail
+      value: "{responses.default}"
+                                # if scale _skipped → tier="UNKNOWN" → rule misses → LLM runs
+                                # if classify _skipped → category="GENERAL" → same path
+
+  # ── OUTPUT STAGES ─────────────────────────────────────────────────
+
+  - name: display
+    type: output_display
+    enabled: true
+    method: stream              # stream | text
+    fallback:
+      on: failure
+      method: text              # fallback to non-streaming if stream breaks
+
+  - name: tts
+    type: output_tts
+    enabled: true              # off globally; voice + multimodal tabs can override
+    method: system              # system (macOS: say / Linux: espeak) | silent
+    fallback:
+      on: failure
+      method: silent            # TTS failure → log + continue, never crash
+    config:
+      rate: 150                 # words per minute
+      blocking: false           # false = speak in background, UI stays responsive
+
+  # ── ALWAYS-LAST ───────────────────────────────────────────────────
+
+  - name: log
+    type: logger
+    enabled: true               # NEVER set false — session history integrity
+    method: session
+    fallback:
+      on: failure
+      method: silent            # log failure → warn only, never abort the turn
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 19. TABS — pipeline context per tab
+#
+#  Each tab defines:
+#    enabled          whether the tab appears in the UI
+#    label            the tab's display name
+#    pipeline_order   ordered list of stage names to execute
+#    overrides        field-level overrides on top of global stage defaults
+#
+#  Override granularity: any field in the stage schema can be overridden.
+#  Example — override just the method:
+#    overrides:
+#      sentiment: {method: llm}
+#  Example — override enabled + config:
+#    overrides:
+#      tts: {enabled: true, config: {rate: 120}}
+#
+#  Tab validation at startup (executor.validate_tabs()):
+#    If no input stage is enabled in a tab's pipeline_order,
+#    the fuser's no_input_behavior determines what happens.
+# ─────────────────────────────────────────────────────────────────────
+tabs:
+
+  # ── 💬 CHAT TAB ───────────────────────────────────────────────────
+  # Text in. Display out. TTS off by default (flip tts.enabled to true).
+  chat:
+    enabled: true
+    label: "💬 Chat"
+    pipeline_order:
+      - text_input
+      - fuser
+      - context_inject    # no-op when vision_input disabled
+      - sentiment
+      - scale
+      - classify
+      - trajectory
+      - respond
+      - display
+      - tts
+      - log
+    overrides:
+      stt:          {enabled: false}
+      vision_input: {enabled: false}
+      context_inject: {enabled: false}
+      tts:          {enabled: false}    # set true to speak chat responses aloud
+
+  # ── 🎙️ VOICE TAB ──────────────────────────────────────────────────
+  # Mic in → STT → pipeline. TTS on (speaks the response back).
+  # Disable tts here if you only want to hear yourself, not the reply.
+  voice:
+    enabled: true
+    label: "🎙️ Voice"
+    pipeline_order:
+      - stt
+      - fuser
+      - context_inject
+      - sentiment
+      - scale
+      - classify
+      - trajectory
+      - respond
+      - display
+      - tts
+      - log
+    overrides:
+      text_input:    {enabled: false}
+      vision_input:  {enabled: false}
+      context_inject: {enabled: false}
+      tts:           {enabled: true}   # voice tab speaks responses
+
+  # ── 📷 VISION TAB ─────────────────────────────────────────────────
+  # Camera is the input. Vision context string becomes the text.
+  # No audio. No TTS (visual-only feedback).
+  vision:
+    enabled: true
+    label: "📷 Vision"
+    pipeline_order:
+      - vision_input
+      - fuser
+      - context_inject    # primary mode: vision IS the text
+      - sentiment
+      - scale
+      - classify
+      - trajectory
+      - respond
+      - display
+      - log
+    overrides:
+      stt:          {enabled: false}
+      text_input:   {enabled: false}
+      vision_input: {enabled: true}
+      context_inject:
+        enabled: true
+        method: primary   # vision replaces text
+      tts:          {enabled: false}
+
+  # ── 🎭 MULTIMODAL TAB ─────────────────────────────────────────────
+  # Full pipeline. All sources can be active simultaneously.
+  # The fuser decides which wins based on priority and what arrived.
+  #
+  # DEFAULT: voice + camera, text off, vision context mode.
+  # SWITCH TO text+camera: set text_input.enabled: true, stt.enabled: false
+  # SWITCH TO voice only:  set vision_input.enabled: false
+  # SWITCH TO camera only: set stt.enabled: false, text_input.enabled: false
+  #   (fuser auto-routes to vision via priority list)
+  #
+  # WHAT IF ALL INPUTS FALSE:
+  #   fuser sees no_input → triggers no_input_behavior (warn / hide_tab)
+  #   Tab is validated at startup — warning printed if this happens.
+  multimodal:
+    enabled: true            # flip to true when exam requires combined modalities
+    label: "🎭 Multimodal"
+    pipeline_order:
+      - stt
+      - text_input
+      - vision_input
+      - fuser
+      - context_inject
+      - sentiment
+      - scale
+      - classify
+      - trajectory
+      - respond
+      - display
+      - tts
+      - log
+    overrides:
+      stt:
+        enabled: true
+      text_input:
+        enabled: true        # flip to true for text+voice in same tab
+      vision_input:
+        enabled: true
+      fuser:
+        enabled: true
+        method: auto_priority
+        config:
+          priority: [voice, text, vision]
+          no_input_behavior: warn
+      context_inject:
+        enabled: true
+        method: context       # vision appended to LLM prompt (not primary)
+      tts:
+        enabled: true        # flip to true to speak multimodal responses
+
+  # ── 📋 REPORT TAB ─────────────────────────────────────────────────
+  # No pipeline — reads from session state directly.
+  report:
+    enabled: true
+    label: "📋 Report"
+    pipeline_order: []        # empty = no stages, display-only tab

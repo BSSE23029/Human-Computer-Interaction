@@ -1,134 +1,115 @@
 """
-pipeline/turn.py -- the single multimodal step that ties everything together.
+pipeline/turn.py  --  the public API for processing one turn.
 
-process_turn() accepts ANY combination of text / audio / frame, resolves it to
-text, runs the full engine (sentiment→scale→classify→transition→alert→respond),
-logs everything to SessionState, and returns a tidy result dict.
+Two interfaces:
 
-Fallback chain built in:
-  text missing + audio given → Whisper STT
-  vision frame given         → OpenCV label injected as LLM context
-  LLM down                   → rule table or default response
-  max_turns reached          → returns {'session_ended': True}
+1. NEW (stage-based, tab-aware):
+       from pipeline.turn import run_turn
+       ctx = run_turn(tab="chat", text="I failed my exam", turn=1)
 
-    r = process_turn(state, text="I failed my exam")
-    r = process_turn(state, audio=mic_array)            # voice turn
-    r = process_turn(state, text="...", frame=cam_bgr)  # text + vision context
+   Delegates to core/executor.py → pipeline/stages.py.
+   Reads/writes LIVE provider — no state passed as parameters.
+
+2. LEGACY (backward-compatible, kept for exam_adapter + replay):
+       from pipeline.turn import process_turn
+       result = process_turn(state, text="...", audio=..., frame=...)
+
+   Bridges the old signature into run_turn so existing code
+   (exam_adapter, replay, tests) works without change.
 """
 
 from core.conf import get
-from text.scale import assess, check_and_alert
-from text.classify import classify
-from text.trajectory import detect_transition
+from core.provider import LIVE
 
+
+# ── NEW API ───────────────────────────────────────────────────────────────────
+
+def run_turn(tab: str = "chat", **initial_ctx) -> dict:
+    """
+    Run the ordered stage pipeline for `tab`.
+
+    Any kwargs are injected into the initial TurnContext.
+    Most useful kwargs:
+        text      str    pre-typed text (placed into text_raw so text_input stage picks it up)
+        audio     array  raw float32 mic data (placed into LIVE.audio.buffer)
+        turn      int    explicit turn number (defaults to session.n_turns + 1)
+
+    Returns the completed TurnContext dict.
+    Session state is updated by the `log` stage automatically.
+    Never raises (errors collected in ctx["errors"]).
+    """
+    from core.executor import run_tab_pipeline
+
+    state = LIVE.session
+    turn_num = initial_ctx.pop("turn", (state.n_turns + 1) if state else 1)
+
+    # Pre-populate LIVE.audio.buffer if caller passed raw audio
+    audio = initial_ctx.pop("audio", None)
+    if audio is not None:
+        LIVE.audio.buffer = audio
+        LIVE.audio.transcript = None   # force re-transcription
+
+    # text goes into ctx["text_raw"] for the text_input stage to read
+    text = initial_ctx.pop("text", None)
+    if text is not None:
+        initial_ctx["text_raw"] = str(text)
+
+    ctx = {"turn": turn_num, **initial_ctx}
+    return run_tab_pipeline(tab, initial_ctx=ctx)
+
+
+# ── LEGACY API (backward-compatible) ─────────────────────────────────────────
 
 def process_turn(
     state,
     text: str = None,
     audio=None,
     frame=None,
-    use_llm_response: bool = None,   # None = auto-decide based on Ollama status
+    use_llm_response: bool = None,
+    tab: str = "chat",
 ) -> dict:
-    """Run one full multimodal turn.
-
-    Returns a dict:
-        turn, text, source, wellbeing, support, transition, vision, response,
-        session_ended (True if max_turns was reached before this call)
     """
-    # ── max_turns guard ───────────────────────────────────────────
+    Legacy wrapper — keeps exam_adapter, replay, and existing tests working.
+
+    Maps old (state, text, audio, frame) signature to run_turn().
+    Returns a dict with the same keys as the old version for compatibility:
+        turn, text, source, wellbeing, support, transition, vision, response, session_ended
+    """
+    # session guard — max_turns check
     max_turns = int(get("session.max_turns", 0))
     if max_turns > 0 and state.n_turns >= max_turns:
-        return {"session_ended": True, "turn": state.n_turns,
-                "text": "", "source": "none", "wellbeing": {}, "support": {},
-                "transition": None, "vision": None, "response": ""}
+        return {
+            "session_ended": True, "turn": state.n_turns,
+            "text": "", "source": "none", "wellbeing": {}, "support": {},
+            "transition": None, "vision": None, "response": "",
+        }
 
-    # ── 1. resolve text + source ──────────────────────────────────
-    source = "text"
-    transcript_result = None
-    if text is None and audio is not None:
-        try:
-            from voice.stt import transcribe
-            transcript_result = transcribe(audio)
-            text = transcript_result.get("text", "")
-            source = "voice"
-        except Exception as e:
-            text = ""
-            print(f"[turn] STT failed: {e}")
+    # temporarily point LIVE.session at the passed state
+    # (handles replay where a fresh SessionState is created per run)
+    _prev_session = LIVE.session
+    LIVE.session = state
 
-    text = (text or "").strip()
-    turn = state.add_turn(
-        text,
-        source=source,
-        confidence=transcript_result.get("confidence", "n/a") if transcript_result else "n/a",
-    )
+    # resolve tab from input type when not specified
+    if tab == "chat":
+        if audio is not None:
+            tab = "voice"
+        elif frame is not None:
+            tab = "vision"
 
-    # ── 2. optional vision context ────────────────────────────────
-    vlabel = None
-    vision_ctx = ""
-    if frame is not None and get("session.input_modes.vision", False):
-        try:
-            from vision.bridge import frame_to_label, vision_context_string
-            vlabel = frame_to_label(frame)
-            state.log_vision(vlabel)
-            if get("vision.bridge.include_in_llm_context", True):
-                template = get("vision.bridge.context_template",
-                               "[Vision] Mood: {mood}, Gesture: {gesture}")
-                vision_ctx = template.format(
-                    face_present=vlabel.get("present", False),
-                    mood=vlabel.get("mood", "unknown"),
-                    gesture=vlabel.get("gesture", "none"),
-                    head_zone=vlabel.get("head_zone", "unknown"),
-                )
-        except Exception as e:
-            print(f"[turn] vision failed: {e}")
+    ctx = run_turn(tab=tab, text=text, audio=audio, turn=state.n_turns + 1)
 
-    # ── 3. text engine ────────────────────────────────────────────
-    wb  = assess(text)
-    state.log_wellbeing(wb)
+    LIVE.session = _prev_session
 
-    sup = classify(text)
-    state.log_support(sup)
-
-    tr  = detect_transition(state.support_log, turn["turn"])
-    state.log_transition(tr)
-
-    check_and_alert(wb, turn["turn"])
-
-    # ── 4. response ───────────────────────────────────────────────
-    # auto-decide: use LLM memory if Ollama is alive, else rule/default
-    if use_llm_response is None:
-        from core.llm import is_alive
-        use_llm_response = is_alive()
-
-    if use_llm_response:
-        try:
-            from core.llm import chat_messages, persona_system
-            msgs = state.messages_for_llm(system=persona_system())
-            # inject vision context into the last user message
-            if vision_ctx and msgs:
-                last_user = next((m for m in reversed(msgs) if m["role"] == "user"), None)
-                if last_user:
-                    last_user["content"] = f"{vision_ctx}\n{last_user['content']}"
-            reply = chat_messages(msgs)
-            if "[LLM" in reply:     # LLM returned an error string — fall through
-                raise RuntimeError(reply)
-        except Exception:
-            use_llm_response = False   # fall through to rule/default
-
-    if not use_llm_response:
-        from text.respond import respond
-        reply = respond(text, sup["primary"], wb["tier"])
-
-    state.add_response(reply)
-
+    # build backward-compatible result dict
     return {
-        "turn":         turn["turn"],
-        "text":         text,
-        "source":       source,
-        "wellbeing":    wb,
-        "support":      sup,
-        "transition":   tr,
-        "vision":       vlabel,
-        "response":     reply,
-        "session_ended":False,
+        "session_ended": False,
+        "turn":          ctx.get("log", {}).get("turn", state.n_turns),
+        "text":          ctx.get("text", text or ""),
+        "source":        ctx.get("source", "text"),
+        "wellbeing":     ctx.get("scale", {}),
+        "support":       ctx.get("classify", {}),
+        "transition":    (ctx.get("trajectory") or {}).get("transition"),
+        "vision":        ctx.get("vision_input"),
+        "response":      ctx.get("response", ""),
+        "errors":        ctx.get("errors", []),
     }

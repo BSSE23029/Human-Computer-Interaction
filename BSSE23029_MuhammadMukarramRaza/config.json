@@ -638,5 +638,339 @@
     "app_subtitle": "Text + Voice + Vision  |  llama3 (Ollama) + Whisper + OpenCV",
     "server_port": 7860,
     "share": false
+  },
+  "stages": [
+    {
+      "name": "stt",
+      "type": "voice_input",
+      "enabled": true,
+      "method": "whisper",
+      "fallback": {
+        "true": "failure",
+        "value": {
+          "text": "",
+          "language": "?",
+          "confidence": "low"
+        }
+      }
+    },
+    {
+      "name": "text_input",
+      "type": "text_input",
+      "enabled": true,
+      "method": "direct",
+      "fallback": {
+        "true": "empty",
+        "value": {
+          "text": ""
+        }
+      }
+    },
+    {
+      "name": "vision_input",
+      "type": "vision_input",
+      "enabled": false,
+      "method": "bridge",
+      "fallback": {
+        "true": "failure",
+        "value": {
+          "present": false,
+          "mood": "no_face",
+          "gesture": "none",
+          "head_zone": null
+        }
+      }
+    },
+    {
+      "name": "fuser",
+      "type": "fuser",
+      "enabled": true,
+      "method": "auto_priority",
+      "fallback": {
+        "true": "no_input",
+        "method": "silent"
+      },
+      "config": {
+        "priority": [
+          "voice",
+          "text",
+          "vision"
+        ],
+        "no_input_behavior": "warn"
+      }
+    },
+    {
+      "name": "context_inject",
+      "type": "context_injector",
+      "enabled": false,
+      "method": "context",
+      "fallback": {
+        "true": "failure",
+        "value": {
+          "injected": false
+        }
+      },
+      "config": {
+        "score_weights": {
+          "smiling": 0.3,
+          "neutral": 0.0,
+          "no_face": -0.1,
+          "drowsy": -0.4
+        }
+      }
+    },
+    {
+      "name": "sentiment",
+      "type": "analyzer",
+      "enabled": true,
+      "method": "lexicon",
+      "fallback": {
+        "true": "failure",
+        "method": "llm",
+        "value": {
+          "compound": 0.0,
+          "pos": 0.0,
+          "neg": 0.0,
+          "neu": 1.0
+        }
+      }
+    },
+    {
+      "name": "scale",
+      "type": "tier_mapper",
+      "enabled": true,
+      "method": "formula",
+      "fallback": {
+        "true": "failure",
+        "method": "llm",
+        "value": {
+          "tier": "NEUTRAL",
+          "score": 0.0,
+          "emoji": "😐",
+          "is_at_risk": false
+        }
+      }
+    },
+    {
+      "name": "classify",
+      "type": "classifier",
+      "enabled": true,
+      "method": "keyword",
+      "fallback": {
+        "true": "no_match",
+        "method": "llm",
+        "value": {
+          "primary": "GENERAL",
+          "all_detected": [],
+          "scores": {}
+        }
+      }
+    },
+    {
+      "name": "trajectory",
+      "type": "tracker",
+      "enabled": true,
+      "method": "halves",
+      "fallback": {
+        "true": "insufficient_data",
+        "value": {
+          "trend": "unknown",
+          "lowest_tier": null,
+          "at_risk_turns": []
+        }
+      }
+    },
+    {
+      "name": "respond",
+      "type": "responder",
+      "enabled": true,
+      "method": "rule_then_llm",
+      "fallback": {
+        "true": "all_fail",
+        "value": "{responses.default}"
+      }
+    },
+    {
+      "name": "display",
+      "type": "output_display",
+      "enabled": true,
+      "method": "stream",
+      "fallback": {
+        "true": "failure",
+        "method": "text"
+      }
+    },
+    {
+      "name": "tts",
+      "type": "output_tts",
+      "enabled": false,
+      "method": "system",
+      "fallback": {
+        "true": "failure",
+        "method": "silent"
+      },
+      "config": {
+        "rate": 150,
+        "blocking": false
+      }
+    },
+    {
+      "name": "log",
+      "type": "logger",
+      "enabled": true,
+      "method": "session",
+      "fallback": {
+        "true": "failure",
+        "method": "silent"
+      }
+    }
+  ],
+  "tabs": {
+    "chat": {
+      "enabled": true,
+      "label": "💬 Chat",
+      "pipeline_order": [
+        "text_input",
+        "fuser",
+        "context_inject",
+        "sentiment",
+        "scale",
+        "classify",
+        "trajectory",
+        "respond",
+        "display",
+        "tts",
+        "log"
+      ],
+      "overrides": {
+        "stt": {
+          "enabled": false
+        },
+        "vision_input": {
+          "enabled": false
+        },
+        "context_inject:{enabled": "false}",
+        "tts": {
+          "enabled": false
+        }
+      }
+    },
+    "voice": {
+      "enabled": true,
+      "label": "🎙️ Voice",
+      "pipeline_order": [
+        "stt",
+        "fuser",
+        "context_inject",
+        "sentiment",
+        "scale",
+        "classify",
+        "trajectory",
+        "respond",
+        "display",
+        "tts",
+        "log"
+      ],
+      "overrides": {
+        "text_input": {
+          "enabled": false
+        },
+        "vision_input": {
+          "enabled": false
+        },
+        "context_inject:{enabled": "false}",
+        "tts": {
+          "enabled": true
+        }
+      }
+    },
+    "vision": {
+      "enabled": true,
+      "label": "📷 Vision",
+      "pipeline_order": [
+        "vision_input",
+        "fuser",
+        "context_inject",
+        "sentiment",
+        "scale",
+        "classify",
+        "trajectory",
+        "respond",
+        "display",
+        "log"
+      ],
+      "overrides": {
+        "stt": {
+          "enabled": false
+        },
+        "text_input": {
+          "enabled": false
+        },
+        "vision_input": {
+          "enabled": true
+        },
+        "context_inject": {
+          "enabled": true,
+          "method": "primary"
+        },
+        "tts": {
+          "enabled": false
+        }
+      }
+    },
+    "multimodal": {
+      "enabled": false,
+      "label": "🎭 Multimodal",
+      "pipeline_order": [
+        "stt",
+        "text_input",
+        "vision_input",
+        "fuser",
+        "context_inject",
+        "sentiment",
+        "scale",
+        "classify",
+        "trajectory",
+        "respond",
+        "display",
+        "tts",
+        "log"
+      ],
+      "overrides": {
+        "stt": {
+          "enabled": true
+        },
+        "text_input": {
+          "enabled": false
+        },
+        "vision_input": {
+          "enabled": true
+        },
+        "fuser": {
+          "enabled": true,
+          "method": "auto_priority",
+          "config": {
+            "priority": [
+              "voice",
+              "text",
+              "vision"
+            ],
+            "no_input_behavior": "warn"
+          }
+        },
+        "context_inject": {
+          "enabled": true,
+          "method": "context"
+        },
+        "tts": {
+          "enabled": false
+        }
+      }
+    },
+    "report": {
+      "enabled": true,
+      "label": "📋 Report",
+      "pipeline_order": []
+    }
   }
 }
