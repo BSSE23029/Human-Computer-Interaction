@@ -746,7 +746,7 @@ vision:
   # "mediapipe"  → force MediaPipe (must be installed: pip install mediapipe)
   # "dnn"        → force YuNet + FER DNN models (models/ folder must exist)
   # "opencv"     → force LBP cascades (always available, no downloads)
-  backend: "auto"
+  backend: "dnn"
 
   # ── Performance: frame-skip + downscale ─────────────────────────
   # Run full detection every N frames; reuse the result in between.

@@ -17,3 +17,10 @@ unset ANTHROPIC_API_KEY
 
 echo $ANTHROPIC_BASE_URL
 echo $ANTHROPIC_API_KEY
+
+
+
+
+```
+tree -I 'node_modules|.git' > structure.txt
+```

@@ -1,0 +1,55 @@
+.
+├── CHEATSHEET.md
+├── README.md
+├── __pycache__
+├── app.py
+├── config.json
+├── config.yaml
+├── core
+│   ├── __init__.py
+│   ├── __pycache__
+│   ├── conf.py
+│   ├── executor.py
+│   ├── llm.py
+│   ├── provider.py
+│   └── state.py
+├── exam_adapter.py
+├── models
+│   ├── emotion_ferplus.onnx
+│   └── yunet.onnx
+├── pipeline
+│   ├── __init__.py
+│   ├── __pycache__
+│   ├── replay.py
+│   ├── stages.py
+│   └── turn.py
+├── requirements.txt
+├── structure.txt
+├── text
+│   ├── __init__.py
+│   ├── __pycache__
+│   ├── classify.py
+│   ├── preprocess.py
+│   ├── report.py
+│   ├── respond.py
+│   ├── scale.py
+│   ├── sentiment.py
+│   └── trajectory.py
+├── vision
+│   ├── __init__.py
+│   ├── __pycache__
+│   ├── backend.py
+│   ├── bridge.py
+│   ├── camera.py
+│   ├── color_motion.py
+│   ├── draw.py
+│   ├── faces.py
+│   ├── hands.py
+│   ├── lips.py
+│   └── smoothing.py
+└── voice
+    ├── __init__.py
+    ├── __pycache__
+    ├── audio_io.py
+    ├── capture.py
+    └── stt.py
