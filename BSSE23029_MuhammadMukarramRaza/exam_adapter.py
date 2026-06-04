@@ -47,7 +47,7 @@ def log_support_transition(support_log: list, new_primary: str, turn_number: int
     """NEXUS Q3.2 style: append a transition event to support_log when the primary
     category changes from the previous turn. Returns the event (or None)."""
     from text.trajectory import log_transition
-    prev = support_log[-1]["curr"] if support_log else None
+    prev = support_log[-1].get("primary") if support_log else None
     return log_transition(support_log, prev, new_primary, turn_number)
 
 

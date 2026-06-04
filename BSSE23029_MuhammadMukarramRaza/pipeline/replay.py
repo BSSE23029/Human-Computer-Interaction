@@ -1,46 +1,86 @@
 """
-pipeline/replay.py -- the "surprise stage": process a PROVIDED log through the
-full pipeline with no microphone / camera. Mirrors NEXUS Stage 4.
+pipeline/replay.py -- offline log replay (the exam "surprise stage").
 
-    from pipeline.replay import run_replay
-    run_replay(STUDENT_LOG)                       # deterministic responses
-    run_replay(STUDENT_LOG, use_llm_response=True) # llama3 responses
+Two ways to run:
+
+  1. From config (exam day — paste log into config.yaml, run one line):
+       from pipeline.replay import run_replay_from_config
+       run_replay_from_config()
+
+  2. Passing a list directly (code style, matches NEXUS Stage 4):
+       from pipeline.replay import run_replay
+       run_replay(STUDENT_LOG)
+
+Both print per-turn analysis and the final intelligence report.
 """
+
+from core.conf import get
 from core.state import SessionState
 from pipeline.turn import process_turn
 from text.report import generate_report
 
 
-def run_replay(log_lines, use_llm_response: bool = False, do_report: bool = True) -> SessionState:
-    """Feed each line through process_turn() as a text turn; print per-turn analysis
-    and (optionally) the final intelligence report. Returns the SessionState."""
+def run_replay(
+    log_lines,
+    use_llm_response: bool = False,   # False = rule/default (safe for offline)
+    do_report: bool = True,
+    print_per_turn: bool = True,
+) -> SessionState:
+    """Feed each line through process_turn() as a text turn.
+
+    Prints per-turn analysis and (optionally) the final report.
+    Returns the completed SessionState for further inspection.
+
+    use_llm_response=True  → llama3 writes every response (better quality)
+    use_llm_response=False → rule table / default (fast, fully offline)
+    """
     state = SessionState()
+
     for i, line in enumerate(log_lines):
         r = process_turn(state, text=line, use_llm_response=use_llm_response)
-        wb, sup = r["wellbeing"], r["support"]
-        flag = "  ⚠ AT-RISK" if wb["is_at_risk"] else ""
-        print(f"Turn {i + 1}: {wb['emoji']} {wb['tier']} | {sup['primary']} "
-              f"| all: {sup['all_detected']}{flag}")
-        print(f"  NEXUS: {r['response']}\n")
+
+        if r.get("session_ended"):
+            print(f"[replay] session.max_turns reached at turn {i}. Stopping.")
+            break
+
+        wb  = r["wellbeing"]
+        sup = r["support"]
+        tr  = r["transition"]
+
+        if print_per_turn:
+            at_risk_flag = "  ⚠ AT-RISK" if wb.get("is_at_risk") else ""
+            esc_flag = "  ↑ ESCALATION" if tr and tr.get("is_escalation") else ""
+            print(f"Turn {i+1:02d}: {wb.get('emoji','')} {wb.get('tier','?'):12} | "
+                  f"{sup.get('primary','?'):12} | all: {sup.get('all_detected', [])}"
+                  f"{at_risk_flag}{esc_flag}")
+            print(f"  → {r['response']}\n")
+
     if do_report:
         generate_report(state)
+
     return state
 
 
-# A sample log so you can demo replay immediately (replace with the exam's log).
-SAMPLE_LOG = [
-    "Hi, I need some help please.",
-    "I have a major assignment due tomorrow and I have not started.",
-    "My laptop also broke yesterday so I cannot access my files.",
-    "To be honest I have been struggling a lot lately, not just academically.",
-    "I have not been sleeping, I feel completely hopeless about everything.",
-    "I think I might need to talk to someone but I do not know who.",
-    "Also I got an email saying my fees are overdue and I cannot register.",
-    "Sorry for dumping all this. I just feel very alone right now.",
-    "Actually, my friend just texted. I feel a tiny bit better now.",
-    "Thank you for listening. I will try to contact the counsellor.",
-]
+def run_replay_from_config(use_llm_response: bool = False) -> SessionState:
+    """Run replay using the log defined in config.yaml (replay.log).
+    Reads print_per_turn and print_report from config too.
+
+    Exam-day usage:
+        python -c "from pipeline.replay import run_replay_from_config; run_replay_from_config()"
+    Or click the button in the gradio Report tab.
+    """
+    log   = get("replay.log") or []
+    ppt   = bool(get("replay.print_per_turn", True))
+    rpt   = bool(get("replay.print_report", True))
+
+    if not log:
+        print("[replay] config.replay.log is empty — paste the exam's STUDENT_LOG there first.")
+        return SessionState()
+
+    print(f"[replay] running {len(log)} lines from config.yaml ...\n")
+    return run_replay(log, use_llm_response=use_llm_response,
+                      do_report=rpt, print_per_turn=ppt)
 
 
 if __name__ == "__main__":
-    run_replay(SAMPLE_LOG)
+    run_replay_from_config()

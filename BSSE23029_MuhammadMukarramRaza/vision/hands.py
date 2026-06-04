@@ -22,8 +22,8 @@ def skin_mask(bgr):
     import cv2
     import numpy as np
     ycrcb = cv2.cvtColor(bgr, cv2.COLOR_BGR2YCrCb)
-    lo = np.array(get("vision.skin_ycrcb.lower", [0, 133, 77]), dtype="uint8")
-    hi = np.array(get("vision.skin_ycrcb.upper", [255, 173, 127]), dtype="uint8")
+    lo = np.array(get("vision.gesture.skin_ycrcb.lower", [0, 133, 77]), dtype="uint8")
+    hi = np.array(get("vision.gesture.skin_ycrcb.upper", [255, 173, 127]), dtype="uint8")
     mask = cv2.inRange(ycrcb, lo, hi)
     kernel = np.ones((5, 5), np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
@@ -32,9 +32,11 @@ def skin_mask(bgr):
     return mask
 
 
-def largest_contour(mask, min_area: int = 3000):
+def largest_contour(mask, min_area: int = None):
     """Biggest contour in the mask (assumed to be the hand), or None."""
     import cv2
+    if min_area is None:
+        min_area = get("vision.gesture.min_contour_area", 5000)
     cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not cnts:
         return None
@@ -76,7 +78,7 @@ def count_fingers(bgr):
 
 def classify_gesture(count: int):
     """Map a finger count to (name, emoji) using the config gesture_map."""
-    gmap = get("vision.gesture_map") or {}
+    gmap = get("vision.gesture.gesture_map") or {}
     entry = gmap.get(str(count)) or gmap.get(count)
     if entry:
         return entry[0], entry[1]

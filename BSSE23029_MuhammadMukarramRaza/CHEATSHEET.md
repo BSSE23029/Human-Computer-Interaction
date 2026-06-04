@@ -127,13 +127,81 @@ run_gesture()
 
 | Want to change… | Edit this key |
 |---|---|
-| 6-tier → 3-tier scale | `scale.tiers` |
-| Category keywords | `categories` |
-| Canned replies | `responses.rules` |
-| Risk formula / thresholds | `scoring` |
-| Assistant persona | `llm.active_persona` / `llm.personas` |
-| Whisper size, record length | `whisper.model_size`, `audio.seconds` |
-| Gesture names, skin colour, blink sensitivity | `vision.*` |
+| 6-tier → 3-tier scale | `scale.tiers` (remove rows) |
+| Tier alert messages | `scale.behavior.TIER.alert.message` |
+| Category keywords | `categories.CATEGORY.keywords` |
+| Add a new category | Add a block under `categories:`, add rules in `responses.rules` |
+| Disable one category | Remove/comment that block under `categories:` |
+| Canned responses | `responses.rules` (CATEGORY\|TIER, CATEGORY\|*, CATEGORY) |
+| Risk formula weights | `scoring.wellbeing_weight`, `scoring.tier_weights` |
+| Action thresholds | `scoring.thresholds` |
+| Assistant persona | `llm.active_persona` → any key in `llm.personas` |
+| Prompt wording | `llm.prompts.respond` / `llm.prompts.classify` etc. |
+| Report narrative | `report.llm_narrative_prompt` |
+| Report banner | `report.banner_title`, `report.banner_subtitle` |
+| Report sections off | `report.sections.risk_score: false` etc. |
+| Whisper size | `whisper.model_size` (tiny/base/small — must be pre-cached) |
+| Record length | `audio.seconds` |
+| Replay log | `replay.log` (paste exam's STUDENT_LOG here) |
+| Session max turns | `session.max_turns` |
+| Enable vision tab | `session.input_modes.vision: true` |
+| HUD items position | `vision.hud.layout` (move items between corners) |
+| HUD item hidden | Remove from all `vision.hud.layout` lists |
+| Gesture map | `vision.gesture.gesture_map` |
+| Skin colour range | `vision.gesture.skin_ycrcb` |
+| Colour to track | `vision.color_track.active_color` + `presets` |
+| Blink sensitivity | `vision.blink.eyes_closed_frames` |
+| Drowsy threshold | `vision.drowsy.closed_frames_alert` |
 
-After editing, the next `python app.py` picks it up. To hot-reload in a REPL:
-`from core.conf import reload; reload()`.
+After editing, the next `python app.py` picks it up. To hot-reload in a running session:
+```python
+from core.conf import reload; reload()
+```
+
+---
+
+## 🗂️ Project structure (quick ref)
+
+```
+app.py               gradio entry point — python app.py to run
+exam_adapter.py      day-of exact-name wrappers → edit this on exam day
+config.yaml          all knobs — edit this, not code
+
+core/conf.py         config loader (YAML → JSON → hardcoded defaults)
+core/llm.py          Ollama/llama3 client (chat, classify, score, JSON, stream)
+core/state.py        SessionState — accumulates all turn data
+
+text/sentiment.py    lexicon scorer → compound float [-1,1]
+text/scale.py        score → tier dict  (assess_wellbeing equivalent)
+text/classify.py     keyword multi-label + intent  (classify_support_need equiv)
+text/trajectory.py   trend, transitions, escalations, frequency rank
+text/respond.py      rule table → LLM fallback → default  (nexus_respond equiv)
+text/report.py       risk formula + banner report  (generate_intelligence_report equiv)
+text/preprocess.py   tokenize, normalize, word_count, count_keywords
+
+voice/capture.py     capture_audio() — mic → float32 array
+voice/stt.py         transcribe() — array → {text,language,confidence}
+voice/audio_io.py    format plumbing (from_gradio, to_float32_mono_16k, load/save)
+
+vision/camera.py     VideoSource, run_loop, draw_text, distance
+vision/faces.py      detect_faces, blink_processor, mood_of, head_zone
+vision/hands.py      skin_mask, count_fingers, classify_gesture, run_gesture
+vision/color_motion.py detect_color, MotionDetector, run_color, run_motion
+vision/bridge.py     frame_to_label, vision_context_string, snapshot
+
+pipeline/turn.py     process_turn() — the multimodal engine step
+pipeline/replay.py   run_replay(), run_replay_from_config()
+```
+
+---
+
+## 🚨 config.yaml ON/OFF switches (section-level)
+
+| Key | true | false |
+|-----|------|-------|
+| `sentiment.enabled` | lexicon scores text | llama3 scores text |
+| `scale.enabled` | score → tier name | llama3 names the state |
+| `categories.enabled` | keyword classification | llama3 classifies |
+| `responses.enabled` | rule table consulted | every response from LLM |
+| `scoring.enabled` | formula computes risk | llama3 estimates risk |
+| All five = false | — | **pure LLM pipeline** |

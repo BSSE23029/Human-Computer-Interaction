@@ -15,7 +15,7 @@ def detect_color(bgr, preset=None, lower=None, upper=None):
     import cv2
     import numpy as np
     if preset:
-        p = (get("vision.color_presets") or {}).get(preset, {})
+        p = (get("vision.color_track.presets") or {}).get(preset, {})
         lower, upper = p.get("lower"), p.get("upper")
     hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
     mask = cv2.inRange(hsv, np.array(lower, dtype="uint8"), np.array(upper, dtype="uint8"))

@@ -1,82 +1,127 @@
 # =====================================================================
-# config.yaml  --  SINGLE SOURCE OF TRUTH for the whole app.
-# Edit values HERE on exam day to re-theme / re-tune WITHOUT touching code.
-# Loaded by core/conf.py  (falls back to config.json if PyYAML missing).
+# config.yaml  --  SINGLE SOURCE OF TRUTH
+# =====================================================================
 #
-# HOW TO USE IN CODE:   from core.conf import CFG, get
-#                       get("llm.model")         -> "llama3"
-#                       get("scale.tiers")       -> list of tier dicts
+# EXAM-DAY WORKFLOW:
+#   1. Edit values HERE to match the exam's theme / task.
+#   2. Run `python app.py` — no code changes needed.
+#   3. To rename mandated function names → edit exam_adapter.py only.
+#
+# CONFIG RULES:
+#   • enabled: true/false  →  section-level ON/OFF switch
+#     - sentiment off  → LLM scores text instead of lexicon
+#     - scale off      → LLM names the emotional state
+#     - categories off → LLM classifies category
+#     - responses off  → LLM responds to everything
+#     - scoring off    → LLM estimates risk score
+#   • If ALL five are off → pure LLM pipeline, nothing deterministic runs
+#   • replay.log       → paste the exam's STUDENT_LOG here, zero code change
+#   • active_persona   → one line to re-theme the whole assistant
+#
+# ACCESS IN CODE:
+#   from core.conf import get
+#   get("llm.model")        → "llama3"
+#   get("scale.tiers")      → list of tiers
+#   get("scoring.tier_weights.CRISIS") → 15
 # =====================================================================
 
 
 # ─────────────────────────────────────────────────────────────────────
-# 1. LLM  ──  local llama3 via Ollama.   Run: ollama serve
+# 1. EXAM META  ──  fills the report banner. Edit on exam day.
+# ─────────────────────────────────────────────────────────────────────
+exam_meta:
+  student_id: "BSSE23029"               # shown in the report banner
+  student_name: "Muhammad Mukarram Raza"
+  course: "SE305T  Human Computer Interaction"
+  exam_date: "2026-06-XX"               # update on exam day
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 2. LLM  ──  local llama3 via Ollama.
+#    BEFORE RUNNING: open a separate terminal → `ollama serve` → leave open.
 # ─────────────────────────────────────────────────────────────────────
 llm:
-  base_url: "http://localhost:11434/v1"   # Ollama OpenAI-compatible endpoint
-  api_key: "ollama"                        # dummy; Ollama ignores it, openai client requires it
-  model: "llama3"                          # must match an `ollama pull`-ed model name
-  temperature: 0.4                         # 0 = deterministic, 1 = creative
-  max_tokens: 512
-  timeout_seconds: 60                      # seconds before giving up on a slow response
+  base_url: "http://localhost:11434/v1"  # Ollama OpenAI-compatible endpoint
+  api_key: "ollama"                       # dummy; Ollama ignores it; client requires it
+  model: "llama3"                         # must match an `ollama pull`-ed model name
+  temperature: 0.4                        # 0 = deterministic · 1 = creative
+  max_tokens: 512                         # cap on reply length
+  timeout_seconds: 60                     # give up if Ollama hangs
 
-  active_persona: "default"               # key into `personas` below — change to re-theme instantly
-  personas:
+  active_persona: "default"              # change to any key in `personas` to re-theme
+  personas:                              # add more rows here; use in active_persona
     default:  "You are a concise, empathetic university wellbeing assistant. Reply in 1-3 supportive sentences."
     tutor:    "You are a patient academic tutor. Explain clearly and encourage the student."
     support:  "You are a calm, professional customer-service agent. Be polite and solution-focused."
     advisor:  "You are a career advisor helping students plan their next steps."
-    # add more personas here — they map directly to `active_persona`
+    # healthcare: "You are a mental-health first-responder. Be calm, non-judgmental."
 
-  use_json_format: false                   # true = ask Ollama for JSON mode (llama3 support varies)
+  context_window: 0   # 0 = send full history every turn
+                      # N = send only last N turns (use ~6 for sessions > 15 turns)
+  offline_fallback: true   # true  = Ollama unreachable → silently use rule/default
+                           # false = raise immediately (catch setup problems early)
+  use_json_format: false   # true = ask Ollama for JSON mode (llama3 support varies)
 
-  # Named prompt templates.  {slots} are filled by llm.build_prompt(name, **vars).
-  # Edit the wording here to steer llama3's output without touching code.
+  # Named prompt templates.  {slots} filled by build_prompt(name, **vars).
+  # Only change the WORDING — keep {slots} intact.
+  # Format-sensitive (ONLY / exactly): classify, multilabel, score, extract.
+  # Format-free (rewrite freely):      respond, summarize.
   prompts:
-    classify:   "Classify the message into exactly ONE of these labels: {labels}.\nReply with ONLY the label.\nMessage: {text}\nLabel:"
-    multilabel: "From these labels: {labels}, list ALL that apply.\nReply with ONLY a comma-separated list of labels.\nMessage: {text}\nLabels:"
-    score:      "Rate the {criterion} of this message from {lo} to {hi}.\nReply with ONLY a number.\nMessage: {text}\nNumber:"
-    extract:    "Extract these fields and reply with ONLY a JSON object using these exact keys: {fields}.\nMessage: {text}\nJSON:"
-    respond:    "You are {persona}.\nContext — emotional tier: {tier}, support need: {category}.\nRespond to: {text}"
-    summarize:  "Summarize this conversation in {max_words} words for {audience}.\nConversation:\n{conversation}\nSummary:"
+    classify:   "Classify the message into exactly ONE of these labels: {labels}.\nReply with ONLY the label, nothing else.\nMessage: {text}\nLabel:"
+    multilabel: "From these labels: {labels}, list ALL that apply.\nReply with ONLY a comma-separated list of labels, nothing else.\nMessage: {text}\nLabels:"
+    score:      "Rate the {criterion} of this message on a scale from {lo} to {hi}.\nReply with ONLY a number, nothing else.\nMessage: {text}\nNumber:"
+    extract:    "Extract these fields and reply with ONLY a valid JSON object using exactly these keys: {fields}.\nMessage: {text}\nJSON:"
+    respond:    "{persona}\nContext — emotional tier: {tier}, support category: {category}.\nRespond to the following message in 1-3 empathetic sentences:\n{text}"
+    summarize:  "Summarize the conversation below in about {max_words} words for {audience}.\nConversation:\n{conversation}\nSummary:"
 
 
 # ─────────────────────────────────────────────────────────────────────
-# 2. WHISPER  ──  speech-to-text
+# 3. WHISPER  ──  speech-to-text
+#    Model sizes (accuracy vs speed):  tiny < base < small < medium
+#    ONLY models you pre-downloaded at home will work offline.
+#    Pre-download:  python -c "import whisper; whisper.load_model('base')"
 # ─────────────────────────────────────────────────────────────────────
 whisper:
-  model_size: "base"   # tiny | base | small | medium   (only pre-downloaded models work offline)
-  language: null       # null = auto-detect.  Set "en" to force English.
-  fp16: false          # false on CPU / Mac (suppresses a warning)
+  model_size: "base"   # "base" is guaranteed by the install list
+                       # "small" only if you cached it: whisper.load_model('small')
+  language: null       # null = auto-detect.  "en" forces English (faster).
+  fp16: false          # false on CPU / Mac (prevents a FP16 warning)
 
 
 # ─────────────────────────────────────────────────────────────────────
-# 3. AUDIO  ──  microphone capture
+# 4. AUDIO  ──  microphone capture defaults
 # ─────────────────────────────────────────────────────────────────────
 audio:
-  sample_rate: 16000   # Hz — Whisper expects 16000
-  seconds: 7           # default recording length (function args can override)
-  channels: 1          # 1 = mono
+  sample_rate: 16000   # Hz — Whisper requires 16000
+  seconds: 7           # default recording length; exam question may override the arg
+  channels: 1          # 1 = mono (always use mono for Whisper)
 
 
 # ─────────────────────────────────────────────────────────────────────
-# 4. VOICE  ──  input pipeline behaviour
+# 5. VOICE  ──  input pipeline behaviour
 # ─────────────────────────────────────────────────────────────────────
 voice:
-  recognizer: "whisper"       # "whisper" (offline) | "sr_whisper" (SpeechRecognition wrapper)
-                               # NEVER use "google" — that needs the internet
-  countdown: true              # print remaining seconds while recording
-  silence_threshold: 0.01      # RMS energy below this = silence  (for VAD-based recording)
-  silence_max_seconds: 2.0     # stop after this much trailing silence
-  confidence_min_chars: 10     # transcript length above this -> confidence "high", else "low"
+  recognizer: "whisper"     # "whisper"    → openai-whisper package (default, best offline)
+                             # "sr_whisper" → SpeechRecognition wrapper around whisper
+                             # NEVER "google" — that calls the internet
+  countdown: true            # print remaining seconds while recording
+  silence_threshold: 0.01    # RMS energy below this = silence (for record_until_silence)
+  silence_max_seconds: 2.0   # stop after this many seconds of trailing silence
+  confidence_min_chars: 10   # transcript length > this → confidence "high", else "low"
 
 
 # ─────────────────────────────────────────────────────────────────────
-# 5. SENTIMENT  ──  VADER-free lexicon scorer  →  compound score in [-1, 1]
-#    (nltk is not in the install list, so we roll our own)
+# 6. SENTIMENT  ──  VADER-free lexicon scorer → compound float in [-1, 1]
+#    (nltk is NOT in the install list — we roll our own)
+#
+#    enabled: true  → lexicon runs; compound score feeds into scale below
+#    enabled: false → skip lexicon; scale asks llama3 for the score instead
 # ─────────────────────────────────────────────────────────────────────
 sentiment:
-  positive_words:     # word: weight   (contributes +weight to the score)
+  enabled: true
+
+  positive_words:     # word: weight  (each hit adds +weight to compound score)
+                      # add domain-specific words here; remove irrelevant ones
     happy: 2.0
     good: 1.5
     great: 2.0
@@ -88,8 +133,11 @@ sentiment:
     love: 2.0
     excited: 1.8
     confident: 1.6
+    # fine: 1.2
+    # okay: 1.0
+    # improving: 1.5
 
-  negative_words:     # word: weight   (contributes -weight to the score)
+  negative_words:     # word: weight  (each hit adds -weight to compound score)
     sad: 2.0
     stressed: 2.0
     anxious: 2.2
@@ -105,337 +153,335 @@ sentiment:
     panic: 2.4
     cry: 2.0
     worried: 1.8
+    # struggling: 1.8
+    # stuck: 1.5
+    # exhausted: 2.0
 
-  boosters:           # word: multiplier   (scales the NEXT word's weight)
+  boosters:           # word: multiplier  (scales the NEXT word's weight)
     very: 1.5
     really: 1.4
     completely: 1.7
     so: 1.3
     extremely: 1.8
+    # absolutely: 1.6
+    # incredibly: 1.7
 
   negations:          # these FLIP the sign of the next sentiment word
     - not
-    - "no"            # quoted — bare `no` is boolean False in YAML
+    - "no"            # MUST be quoted — bare `no` becomes boolean False in YAML
     - never
     - cannot
     - "can't"
     - "don't"
     - "didn't"
+    # - barely
+    # - hardly
 
 
 # ─────────────────────────────────────────────────────────────────────
-# 6. SCALE  ──  emotional / state tiers
+# 7. SCALE  ──  emotional / state tiers
 #
-#  Each tier is a dict with:
-#    name    : display name (string)
-#    low     : inclusive lower bound of compound score
-#    high    : exclusive upper bound
-#    emoji   : shown in UI and console
-#    enabled : false = tier is skipped entirely (score falls to next tier)
-#    alert
-#      show     : true = print a console alert when this tier is reached
-#      message  : the alert text  ({turn} is replaced with the turn number)
-#      color    : gradio/terminal color hint  (red | orange | yellow | green | blue)
-#    is_at_risk: true = sets is_at_risk=True in the result dict
-#    report_weight: how much this tier's occurrences add to the risk score
-#                   (overrides the global scoring.at_risk_weight for that tier)
+#    enabled: true  → map sentiment score → named tier (using tiers table below)
+#    enabled: false → skip; respond.py asks llama3 to name the state directly
 #
-#  To collapse to 3 tiers: set enabled: false on STRESSED and DISTRESSED.
-#  To add a tier:          insert a new dict in the right score position.
+#    TIER ROWS:  [name, low, high, emoji]
+#      score falls in tier when  low <= score < high
+#      remove a row to collapse that tier (score falls to next matching row)
+#      add a row anywhere to insert a new tier
+#
+#    Quick examples:
+#      3-tier: remove STRESSED and DISTRESSED rows
+#      5-tier: remove DISTRESSED row
+#      6-tier: keep all (default)
+#
+#    TIER BEHAVIOR (keyed by tier name):
+#      alert.show    → print a console alert every time this tier is hit
+#      alert.message → text displayed  ({turn} = turn number)
+#      alert.color   → red | orange | yellow | green | blue
+#      is_at_risk    → sets is_at_risk=True in the result dict
+#    Tier risk weights → see scoring.tier_weights below (all in one place)
 # ─────────────────────────────────────────────────────────────────────
 scale:
+  enabled: true
+
   tiers:
-    - name: "THRIVING"
-      low: 0.60
-      high: 100.0
-      emoji: "🌟"
-      enabled: true
-      alert:
-        show: false
-        message: ""
-        color: "green"
-      is_at_risk: false
-      report_weight: 0          # no risk contribution for positive tiers
+    - ["THRIVING",    0.60,  100.0, "🌟"]
+    - ["CONTENT",     0.20,    0.60, "😊"]
+    - ["NEUTRAL",    -0.19,    0.20, "😐"]
+    - ["STRESSED",   -0.40,   -0.19, "😟"]  # remove this line → merges into NEUTRAL
+    - ["DISTRESSED", -0.60,   -0.40, "😢"]  # remove this line → collapses into CRISIS
+    - ["CRISIS",    -100.0,   -0.60, "🆘"]
 
-    - name: "CONTENT"
-      low: 0.20
-      high: 0.60
-      emoji: "😊"
-      enabled: true
+  behavior:            # only tiers that need non-default behavior need a block here
+    STRESSED:
       alert:
-        show: false
-        message: ""
-        color: "green"
-      is_at_risk: false
-      report_weight: 0
-
-    - name: "NEUTRAL"
-      low: -0.19
-      high: 0.20
-      emoji: "😐"
-      enabled: true
-      alert:
-        show: false
-        message: ""
-        color: "blue"
-      is_at_risk: false
-      report_weight: 0
-
-    - name: "STRESSED"
-      low: -0.40
-      high: -0.19
-      emoji: "😟"
-      enabled: true             # set false to merge STRESSED into NEUTRAL range
-      alert:
-        show: false             # set true to print a soft alert for every STRESSED turn
-        message: "Turn {turn}: Student appears stressed. Monitor closely."
+        show: false    # true → soft console warning every STRESSED turn
+        message: "Turn {turn}: Student appears stressed."
         color: "orange"
       is_at_risk: false
-      report_weight: 5          # each STRESSED turn adds 5 to the risk score
 
-    - name: "DISTRESSED"
-      low: -0.60
-      high: -0.40
-      emoji: "😢"
-      enabled: true             # set false to collapse into CRISIS
+    DISTRESSED:
       alert:
         show: true
-        message: "⚠ Turn {turn}: Student is DISTRESSED. Consider proactive check-in."
+        message: "⚠  Turn {turn}: Student is DISTRESSED. Consider a check-in."
         color: "orange"
-      is_at_risk: false         # set true if you want DISTRESSED to also flag at-risk
-      report_weight: 10
+      is_at_risk: false    # set true → DISTRESSED also flags at-risk
 
-    - name: "CRISIS"
-      low: -100.0
-      high: -0.60
-      emoji: "🆘"
-      enabled: true             # should almost never be disabled
+    CRISIS:
       alert:
         show: true
-        message: "🚨 CRISIS ALERT — Turn {turn}: Immediate human intervention required. Counselling line: 0800-XXX-XXXX"
+        message: "🚨 CRISIS — Turn {turn}: Immediate intervention needed. Counselling: 0800-XXX-XXXX"
         color: "red"
-      is_at_risk: true          # always sets is_at_risk=True
-      report_weight: 15         # each CRISIS turn adds 15 to the risk score
+      is_at_risk: true     # CRISIS always flags at-risk
 
 
 # ─────────────────────────────────────────────────────────────────────
-# 7. CATEGORIES  ──  multi-label keyword classifier
+# 8. CATEGORIES  ──  multi-label keyword classifier
 #
-#  Each category is a dict with:
-#    keywords : list of trigger words (case-insensitive substring match)
-#    enabled  : false = category is ignored entirely by the classifier
-#    escalation_target: true = transitioning INTO this category is an escalation
-#    response_priority : higher = preferred when multiple categories match
+#    enabled: true  → keyword matching runs on every turn
+#    enabled: false → skip keywords; llama3 classifies category instead
 #
-#  Primary = highest-scoring enabled category.
-#  all_detected = all enabled categories with score > 0.
+#    PER-CATEGORY FIELDS:
+#      escalation_target  → transitioning INTO this category = is_escalation=True
+#      response_priority  → higher wins when multiple categories match (primary)
+#      keywords           → case-insensitive word list; add / remove freely
+#
+#    TO DISABLE ONE CATEGORY: remove or comment out its block.
+#    TO ADD A CATEGORY: add a block + add response rules for it below.
+#
+#    scoring_method:
+#      "count"    → total keyword hits  (verbose messages score higher; default)
+#      "presence" → binary 0/1 per category (one hit = detected)
 # ─────────────────────────────────────────────────────────────────────
 categories:
+  enabled: true
+  scoring_method: "count"
+
   ACADEMIC:
-    enabled: true
     escalation_target: false
     response_priority: 2
-    keywords: [assignment, deadline, exam, grade, fail, pass, lecture, study, professor, submit, midterm, course]
+    keywords:          # add/remove words to tune detection for the exam theme
+      [assignment, deadline, exam, grade, fail, pass, lecture, study,
+       professor, submit, midterm, course, marks, test, quiz, tutor]
+       # struggling, behind, attendance, plagiarism
 
   WELLBEING:
-    enabled: true
-    escalation_target: true      # transitioning INTO WELLBEING = is_escalation=True
-    response_priority: 5         # highest priority — always dominates when matched
-    keywords: [stress, anxious, depressed, lonely, overwhelmed, panic, cry, hopeless, afraid, sleep, sad]
+    escalation_target: true   # moving INTO WELLBEING = is_escalation=True
+    response_priority: 5      # highest priority — dominates when matched
+    keywords:
+      [stress, anxious, depressed, lonely, overwhelmed, panic, cry,
+       hopeless, afraid, sleep, sad, struggling, exhausted, burden,
+       cope, coping, someone, talk, feelings, mental, upset, numb,
+       empty, lost, broken, hurt, hard, difficult, tough, low, dark]
+       # suicidal, harm, self-harm, breakdown, crisis, trauma
 
   FINANCIAL:
-    enabled: true
     escalation_target: false
     response_priority: 3
-    keywords: [fees, scholarship, loan, afford, money, rent, bursary, payment, debt, overdue]
+    keywords:
+      [fees, scholarship, loan, afford, money, rent, bursary, payment,
+       debt, overdue, broke, fund, grant, stipend, tuition]
 
   TECHNICAL:
-    enabled: true
     escalation_target: false
     response_priority: 1
-    keywords: [portal, login, password, system, error, access, email, vpn, reset, laptop, broke, files]
+    keywords:
+      [portal, login, password, system, error, access, email, vpn, reset,
+       laptop, broke, files, wifi, software, crash, website, account]
 
   SOCIAL:
-    enabled: true
     escalation_target: false
     response_priority: 2
-    keywords: [friends, roommate, belong, isolated, group, relationship, community, alone]
+    keywords:
+      [friends, roommate, belong, isolated, group, relationship, community,
+       alone, bully, harassed, excluded, peer, social, connection]
 
   ADMIN:
-    enabled: true
     escalation_target: false
     response_priority: 1
-    keywords: [enrolment, certificate, transcript, registration, form, office, register]
+    keywords:
+      [enrolment, certificate, transcript, registration, form, office,
+       register, deadline, withdrawal, deferral, appeal, HR, document]
 
-  # ── add an entirely new domain category below and nothing else changes ──
+  # ── Template for a new category ──────────────────────────────────
   # MEDICAL:
-  #   enabled: false
   #   escalation_target: true
   #   response_priority: 4
-  #   keywords: [hospital, doctor, prescription, sick, injury, mental health]
+  #   keywords:
+  #     [hospital, doctor, prescription, sick, injury, medication, mental health]
 
 
 # ─────────────────────────────────────────────────────────────────────
-# 8. RESPONSES  ──  rule-combo replies + LLM fallback
+# 9. INTENTS  ──  single-label keyword intent (used by classify_intent)
+#    Separate from categories — these are conversational acts, not support domains.
+#    Add / remove rows freely.
+# ─────────────────────────────────────────────────────────────────────
+intents:
+  greeting:  [hi, hello, hey, "good morning", "good afternoon", "good evening"]
+  goodbye:   [bye, goodbye, "see you", "thank you", thanks, done, finished]
+  question:  ["?", how, what, why, when, where, who, explain, tell, clarify]
+  complaint: [angry, terrible, worst, unacceptable, broken, awful, useless, ridiculous]
+  request:   [please, "can you", "could you", "i need", "i want", help, assist, support]
+  # praise:  [great, perfect, love, excellent, helpful, amazing]
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 10. RESPONSES  ──  rule table + LLM fallback
 #
-#  Key format:  "CATEGORY|TIER"   or   "CATEGORY|*"  (wildcard tier)
-#  Lookup order:  exact match  →  wildcard  →  LLM fallback  →  default
+#    enabled: true  → rule table is consulted before the LLM
+#    enabled: false → skip rules; every response comes from llama3
+#
+#    RULE KEY FORMATS (checked in this priority order):
+#      "CATEGORY|TIER"   exact match        → "WELLBEING|CRISIS"
+#      "CATEGORY|*"      wildcard tier      → "FINANCIAL|*"
+#      "CATEGORY"        category only      → "WELLBEING"
+#      "*"               last-resort catch-all (use sparingly — blocks LLM)
+#    No match + use_llm_fallback=true  → llama3 responds
+#    No match + use_llm_fallback=false → default string
 # ─────────────────────────────────────────────────────────────────────
 responses:
-  use_llm_fallback: true         # if no rule matches, call llama3 using prompts.respond template
+  enabled: true
+  use_llm_fallback: true   # true  = LLM responds when no rule matches (recommended)
+                            # false = default string when no rule matches
   default: "Thank you for sharing that. Can you tell me a little more?"
+
   rules:
+    # ── exact CATEGORY|TIER (most specific — checked first) ──────
     "WELLBEING|CRISIS":     "I am very concerned about you. Please contact the counselling line RIGHT NOW: 0800-XXX-XXXX."
     "WELLBEING|DISTRESSED": "It sounds like you are going through a really difficult time. Have you spoken to anyone about how you are feeling?"
-    "WELLBEING|STRESSED":   "It sounds like things are piling up. Let us slow down — what is weighing on you most right now?"
-    "ACADEMIC|STRESSED":    "Exam pressure is real. Let us look at what support your faculty offers — have you spoken to your tutor?"
-    "ACADEMIC|DISTRESSED":  "Falling behind can feel overwhelming. Your faculty should have an academic support office — shall we find their contact?"
-    "FINANCIAL|*":          "Financial difficulty is more common than you think. The university bursary office can help — shall I give you their contact?"
-    "TECHNICAL|*":          "Let me help you with that technical issue. Which system are you trying to access?"
-    "SOCIAL|DISTRESSED":    "Feeling isolated at university is incredibly hard. The student union runs weekly social events — would that help?"
+    "WELLBEING|STRESSED":   "Things seem to be piling up. Let us slow down — what is weighing on you most right now?"
+    "ACADEMIC|DISTRESSED":  "Falling behind can feel overwhelming. Your faculty academic support office can help — shall we find their contact?"
+    "ACADEMIC|STRESSED":    "Exam pressure is real. Have you spoken to your tutor about what support your faculty offers?"
     "SOCIAL|CRISIS":        "Feeling completely alone is serious. Please reach out to the counselling service today: 0800-XXX-XXXX."
-    "ADMIN|*":              "I can help with that admin question. Which office or form do you need help with?"
+    "SOCIAL|DISTRESSED":    "Feeling isolated is incredibly hard. The student union runs weekly social events — would that help?"
+
+    # ── wildcard tier (category + any tier) ──────────────────────
+    "FINANCIAL|*":  "Financial difficulty is more common than you think. The bursary office can help — shall I give you their contact?"
+    "TECHNICAL|*":  "Let me help with that technical issue. Which system are you trying to access?"
+    "ADMIN|*":      "I can help with that admin question. Which office or form do you need?"
+
+    # ── category only (no tier needed — works when scale is off) ──
+    "WELLBEING":    "It sounds like a tough time. Would you like to talk more about how you are feeling?"
+    "ACADEMIC":     "Let us look at what academic support is available. Have you checked with your faculty office?"
+    "SOCIAL":       "Social connections really matter. Have you tried any of the student society events?"
+    "FINANCIAL":    "Financial worries can be really stressful. Have you contacted the bursary office?"
+
+    # ── add more rules below as the exam demands ──────────────────
+    # "MEDICAL|*":  "Your health comes first. Have you spoken to the campus health centre?"
+    # "*":          "I hear you. Can you tell me a bit more?"  # catch-all (use sparingly)
 
 
 # ─────────────────────────────────────────────────────────────────────
-# 9. SCORING  ──  risk formula for the report
+# 11. SCORING  ──  risk formula  (all weights in one place)
 #
-#  risk = base_risk
-#       + abs(avg_sentiment) * wellbeing_weight
-#       + sum(tier.report_weight for each at-risk turn)   ← from scale tiers above
-#       + escalation_count * escalation_weight
-#       + verbose_bonus  (if avg words/turn > verbose_threshold)
-#  clamped to [0, 100].  Action = first threshold the score meets (high to low).
+#    enabled: true  → formula computes a 0-100 risk score
+#    enabled: false → llama3 estimates risk from the full conversation
+#
+#    FORMULA:
+#      risk = base_risk
+#           + abs(avg_sentiment_score) × wellbeing_weight
+#           + sum(tier_weights[tier] for each turn)
+#           + escalation_count × escalation_weight
+#           + verbose_bonus  (if avg words/turn > verbose_threshold)
+#      clamped to [0, 100]
+#      action = first threshold the score meets (checked high → low)
 # ─────────────────────────────────────────────────────────────────────
 scoring:
-  base_risk: 20
-  wellbeing_weight: 40           # × abs(average sentiment compound score)
-  escalation_weight: 10          # × number of escalation transitions
-  verbose_threshold: 20          # avg words/turn above this adds verbose_bonus
+  enabled: true
+  base_risk: 20                # starting point before any penalties
+  wellbeing_weight: 40         # × abs(session-average sentiment score)
+  escalation_weight: 10        # × number of category escalation transitions
+  verbose_threshold: 20        # if avg words/turn exceeds this → add verbose_bonus
   verbose_bonus: 5
-  thresholds:                    # checked high → low; first match wins
-    URGENT_REFERRAL: 70
-    FOLLOW_UP: 40
-    NO_ACTION: 0
+
+  tier_weights:                # risk points added PER TURN at that tier
+    STRESSED: 5                # remove a tier → its turns contribute 0 points
+    DISTRESSED: 10
+    CRISIS: 15
+    # THRIVING: -5             # add negative weights to reward positive turns
+
+  thresholds:                  # action assigned to the highest threshold the score clears
+    URGENT_REFERRAL: 70        # risk ≥ 70 → URGENT_REFERRAL
+    FOLLOW_UP: 40              # risk ≥ 40 → FOLLOW_UP
+    NO_ACTION: 0               # risk ≥ 0  → NO_ACTION  (always matches last)
+    # MONITOR: 25              # add intermediate thresholds as needed
 
 
 # ─────────────────────────────────────────────────────────────────────
-# 10. VISION  ──  OpenCV only  (Haar cascades ship inside opencv-python)
+# 12. TRAJECTORY  ──  did the student improve or decline?
 #
-#  Each detector has `enabled: true/false`.
-#  Setting enabled: false removes that detector from the live loop entirely —
-#  the frame is still captured and passed to other enabled detectors.
-# ─────────────────────────────────────────────────────────────────────
-vision:
-  webcam_index: 0
-  flip_webcam: true              # mirror selfie view
-  wait_key_ms: 1                 # cv2.waitKey delay in the live loop (ms)
-
-  # ── Haar cascade filenames (bundled with opencv-python, no download) ──
-  haar:
-    face:  "haarcascade_frontalface_default.xml"
-    eye:   "haarcascade_eye.xml"
-    smile: "haarcascade_smile.xml"
-    face_scale:      1.1         # detectMultiScale scaleFactor
-    face_neighbors:  5           # minNeighbors  (↑ = fewer false positives)
-    eye_neighbors:   8
-    smile_neighbors: 20          # smile over-fires if too low
-
-  # ── Face detection (required by all face-based detectors below) ──
-  face_detect:
-    enabled: true                # master switch — disabling this also disables blink/smile/head
-
-  # ── Blink counter ──
-  blink:
-    enabled: true
-    eyes_closed_frames: 2        # consecutive frames with no eyes detected = "closed"
-    display_count: true          # show "Blinks: N" on the frame
-
-  # ── Drowsiness alert ──
-  drowsy:
-    enabled: true
-    closed_frames_alert: 20      # eyes absent for this many frames → show DROWSY warning
-    alert_message: "DROWSY! Eyes open!"
-
-  # ── Head-pose zone classifier (Left / Right / Up / Down / Forward) ──
-  head_pose:
-    enabled: true
-    deadzone_ratio: 0.15         # fraction of frame width/height treated as "Forward"
-    display_zone: true
-
-  # ── Smile → mood (Smiling / Neutral) ──
-  smile_mood:
-    enabled: true
-    display_mood: true
-
-  # ── Hand gesture (skin-mask + convex hull → finger count → gesture name) ──
-  gesture:
-    enabled: true
-    skin_ycrcb:                  # YCrCb skin-colour mask range
-      lower: [0, 133, 77]
-      upper: [255, 173, 127]
-    min_contour_area: 5000       # ignore hand-blobs smaller than this (px²)
-    display_gesture: true
-    gesture_map:                 # finger count (as string key) → [name, emoji]
-      "0": ["Fist",      "✊"]
-      "1": ["One",       "☝️"]
-      "2": ["Peace",     "✌️"]
-      "3": ["Three",     "3️⃣"]
-      "4": ["Four",      "4️⃣"]
-      "5": ["Open Hand", "🖐"]
-
-  # ── Colour tracker (track a named HSV blob) ──
-  color_track:
-    enabled: false               # disabled by default; enable when a task needs it
-    active_color: "red"          # which preset to track
-    display_centroid: true
-    presets:
-      red:   {lower: [0,   120,  70], upper: [10,  255, 255]}
-      green: {lower: [40,   70,  70], upper: [80,  255, 255]}
-      blue:  {lower: [100, 150,   0], upper: [140, 255, 255]}
-
-  # ── Motion detector ──
-  motion:
-    enabled: false               # disabled by default; enable for activity/wave detection
-    method: "diff"               # "diff" (frame-difference)  |  "mog2" (background subtractor)
-    threshold: 25                # pixel-difference threshold for "diff" method
-    min_area: 500                # ignore motion blobs smaller than this (px²)
-    display_motion: true
-
-  # ── Vision → text bridge ──
-  # Controls what vision labels are appended to the LLM context each turn.
-  bridge:
-    include_in_llm_context: true  # pass detected labels to llama3 as extra context
-    context_template: "[Vision] Face: {face_present}, Mood: {mood}, Gesture: {gesture}, Head: {head_zone}"
-
-
-# ─────────────────────────────────────────────────────────────────────
-# 11. REPORT  ──  session intelligence report
+#    method: "halves" (default, matches NEXUS exam algorithm)
+#      split session into first-half / second-half, compare averages
+#    method: "slope"
+#      fit a line through all sentiment scores; sign of slope = trend
 #
-#  Two modes:
-#    use_llm_narrative: false  →  deterministic formula-based report (fast, auto-gradable)
-#    use_llm_narrative: true   →  llama3 writes the narrative section using the full
-#                                 conversation history and the scores we computed
+#    A trend is "improving"   if second_avg > first_avg + improving_threshold
+#              "declining"   if second_avg < first_avg - declining_threshold
+#              "fluctuating" otherwise
+# ─────────────────────────────────────────────────────────────────────
+trajectory:
+  method: "halves"
+  improving_threshold: 0.10   # second half must beat first half by this much
+  declining_threshold: 0.10   # first half must beat second half by this much
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 13. SESSION  ──  live session controls
+# ─────────────────────────────────────────────────────────────────────
+session:
+  max_turns: 10          # stop after this many turns  (0 = unlimited)
+  auto_report: true      # print the full report automatically when session ends
+  input_modes:           # set false to hide that tab in the gradio UI
+    text: true
+    voice: true
+    vision: false        # flip to true when the exam adds a vision requirement
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 14. REPLAY  ──  offline log replay  (the exam "surprise stage")
+#
+#    On exam day: paste the exam's STUDENT_LOG into `log` below.
+#    Run: python -c "from pipeline.replay import run_replay_from_config; run_replay_from_config()"
+#    Or click "Run Replay" in the gradio Report tab.
+# ─────────────────────────────────────────────────────────────────────
+replay:
+  enabled: true
+  print_per_turn: true   # print tier + category + response after each entry
+  print_report: true     # print the full session report at the end
+  log:                   # ← REPLACE with the exam's STUDENT_LOG on exam day
+    - "Hi, I need some help please."
+    - "I have a major assignment due tomorrow and I have not started."
+    - "My laptop also broke yesterday so I cannot access my files."
+    - "To be honest I have been struggling a lot lately, not just academically."
+    - "I have not been sleeping, I feel completely hopeless about everything."
+    - "I think I might need to talk to someone but I do not know who."
+    - "Also I got an email saying my fees are overdue and I cannot register."
+    - "Sorry for dumping all this. I just feel very alone right now."
+    - "Actually, my friend just texted. I feel a tiny bit better now."
+    - "Thank you for listening. I will try to contact the counsellor."
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 15. REPORT  ──  session intelligence report
 # ─────────────────────────────────────────────────────────────────────
 report:
-  use_llm_narrative: true        # true = LLM narrative + formula scores | false = formula only
+  use_llm_narrative: true   # true  = llama3 writes the clinical narrative section
+                             # false = deterministic fallback narrative only
 
-  # Which sections to include in the printed report (set false to hide a section)
-  sections:
+  sections:                  # set any section to false to hide it from the report
     session_summary: true        # total turns, voice vs text breakdown
-    wellbeing_trajectory: true   # trend + lowest tier + at-risk turns
-    support_categories: true     # all detected categories ranked by frequency
+    wellbeing_trajectory: true   # trend + lowest tier
+    support_categories: true     # categories ranked by frequency
     escalations: true            # transitions into escalation_target categories
     risk_score: true             # numeric score + recommended action
-    llm_narrative: true          # prose summary written by llama3
-    vision_summary: true         # dominant gesture/mood/blink count (if vision was active)
+    llm_narrative: true          # prose narrative written by llama3
+    vision_summary: true         # gesture/mood/blink summary (if vision was active)
+    include_raw_turns: false     # true = print the full turn-by-turn log
 
-  # Prompt fed to llama3 for the narrative section.
-  # Available slots: {conversation}, {tier_summary}, {risk_score}, {action}, {audience}
   llm_narrative_prompt: |
-    You are writing a {audience} report based on a student support session.
+    You are writing a {audience} report.
+    Risk score: {risk_score}/100  →  Recommended action: {action}
     Session summary: {tier_summary}
-    Risk score: {risk_score} / 100  →  Recommended action: {action}
 
     Full conversation:
     {conversation}
@@ -445,21 +491,150 @@ report:
     - the main support needs identified
     - any critical moments (crisis alerts, escalations)
     - a clear recommended next step for the support team.
-    Do NOT repeat the raw scores — interpret them.
+    Do NOT repeat the raw numbers — interpret them in plain language.
 
-  narrative_audience: "university counselling team"  # injected into {audience} slot above
-
-  # Banner strings (cosmetic — change to match whatever the exam's theme is)
-  banner_title: "SESSION INTELLIGENCE REPORT"
+  narrative_audience: "university counselling team"
+  banner_title: "SESSION INTELLIGENCE REPORT"    # change to match exam theme
   banner_subtitle: "Counsellor Eyes Only"
   banner_width: 55
 
 
 # ─────────────────────────────────────────────────────────────────────
-# 12. UI  ──  gradio app
+# 16. VISION  ──  OpenCV only (Haar cascades ship inside opencv-python)
+#    All detectors have `enabled: true/false`.
+#    Setting enabled: false removes that detector from the live loop.
+# ─────────────────────────────────────────────────────────────────────
+vision:
+  webcam_index: 0         # 0 = default webcam; try 1 or 2 if wrong camera opens
+  flip_webcam: true       # true = mirror selfie view (natural feel)
+  wait_key_ms: 1          # cv2.waitKey delay ms in the live loop (1 = responsive)
+
+  # ── Haar cascade filenames ──────────────────────────────────────
+  # These XML files ship inside opencv-python (offline, no download needed).
+  # Verify location: python -c "import cv2,os; print(os.listdir(cv2.data.haarcascades))"
+  haar:
+    face:  "haarcascade_frontalface_default.xml"
+    eye:   "haarcascade_eye.xml"
+    smile: "haarcascade_smile.xml"
+    face_scale:      1.1   # detectMultiScale scaleFactor (1.05 = more detections, slower)
+    face_neighbors:  5     # minNeighbors  (↑ = fewer false positives, ↓ = more detections)
+    eye_neighbors:   8
+    smile_neighbors: 20    # smile over-fires below ~15
+
+  # ── Face detect (master switch — disabling this disables blink/smile/head too) ──
+  face_detect:
+    enabled: true
+
+  # ── Blink counter ───────────────────────────────────────────────
+  blink:
+    enabled: true
+    eyes_closed_frames: 2   # consecutive frames with no eyes detected = "closed"
+                             # increase to 3-4 if getting false blink counts
+
+  # ── Drowsiness alert ────────────────────────────────────────────
+  drowsy:
+    enabled: true
+    closed_frames_alert: 20   # eyes absent this many frames → DROWSY warning
+    alert_message: "DROWSY! Eyes open!"
+
+  # ── Head-pose zone (Left / Right / Up / Down / Center) ──────────
+  head_pose:
+    enabled: true
+    deadzone_ratio: 0.15   # fraction of frame treated as "Center" before calling a direction
+
+  # ── Smile-mood (Smiling / Neutral) ──────────────────────────────
+  smile_mood:
+    enabled: true
+
+  # ── Hand gesture (skin mask + convex hull → finger count → gesture name) ──
+  gesture:
+    enabled: true
+    skin_ycrcb:               # YCrCb skin-colour range — tune for your lighting
+      lower: [0, 133, 77]     # increase Cr lower bound if too much background detected
+      upper: [255, 173, 127]
+    min_contour_area: 5000    # ignore blobs smaller than this (px²); increase to reduce noise
+    gesture_map:              # finger count (string key) → [name, emoji]
+                              # to add: "6": ["Six","6️⃣"]  (rare but possible)
+      "0": ["Fist",      "✊"]
+      "1": ["One",       "☝️"]
+      "2": ["Peace",     "✌️"]
+      "3": ["Three",     "3️⃣"]
+      "4": ["Four",      "4️⃣"]
+      "5": ["Open Hand", "🖐"]
+
+  # ── Colour tracker ──────────────────────────────────────────────
+  color_track:
+    enabled: false              # flip to true when the exam asks for colour tracking
+    active_color: "red"         # which preset to track
+    presets:                    # add new colours with HSV [H, S, V] lower/upper bounds
+      red:   {lower: [0,   120,  70], upper: [10,  255, 255]}
+      green: {lower: [40,   70,  70], upper: [80,  255, 255]}
+      blue:  {lower: [100, 150,   0], upper: [140, 255, 255]}
+      # yellow: {lower: [20, 100, 100], upper: [35, 255, 255]}
+      # orange: {lower: [10, 120,  70], upper: [25, 255, 255]}
+
+  # ── Motion detector ─────────────────────────────────────────────
+  motion:
+    enabled: false              # flip to true for activity / "wave to continue" tasks
+    method: "diff"              # "diff" = frame-difference (simple, fast)
+                                # "mog2" = background subtractor (better for static bg)
+    threshold: 25               # pixel-difference value to count as motion (for "diff")
+    min_area: 500               # ignore motion blobs smaller than this (px²)
+
+  # ── HUD (what is drawn on the frame) ────────────────────────────
+  # The LAYOUT LISTS control BOTH what is shown AND where it appears.
+  # To hide an element: remove it from every layout list.
+  # To move an element: move it to a different corner list.
+  # To add a new element: add a string key and handle it in vision/bridge.py.
+  #
+  # All available elements:
+  #   fps        → frames-per-second counter
+  #   tier       → current wellbeing tier name + emoji
+  #   score      → current sentiment compound score
+  #   turn       → current session turn number
+  #   blink      → running blink count
+  #   drowsy     → drowsiness status / alert
+  #   head_zone  → head position (Left / Right / Up / Down / Center)
+  #   gesture    → detected hand gesture name + emoji
+  #   mood       → smile-mood (Smiling / Neutral)
+  hud:
+    font_scale: 0.7              # text size on frame (0.5 = small, 1.0 = large)
+    thickness: 2                 # stroke thickness in pixels
+    color_default: [0, 255, 0]   # BGR — green  (normal info labels)
+    color_warning: [0, 0, 255]   # BGR — red    (alerts: drowsy, crisis tier)
+    color_info:    [255, 255, 0] # BGR — cyan   (secondary labels)
+    layout:                      # add/remove/move items to customise the overlay
+      top_left:     ["blink", "drowsy", "head_zone"]   # remove item → hide it
+      top_right:    ["fps", "tier", "score"]            # add "turn" → show turn counter here
+      bottom_left:  ["gesture"]                          # add "mood" → show mood here
+      bottom_right: ["mood", "turn"]                    # remove "turn" → hide turn counter
+
+  # ── Display / web stream ────────────────────────────────────────
+  # Annotated frames (with all HUD overlays drawn) are streamed to the
+  # gradio Vision tab as a live video feed.
+  display:
+    width: 640
+    height: 480
+    stream_fps: 15               # target frames per second to the browser
+    show_window: false           # true = ALSO open a cv2.imshow() window (debug only)
+
+  # ── Stability (reduce flicker) ──────────────────────────────────
+  stability:
+    gesture_hold_frames: 5       # gesture must be stable for N frames before it locks in
+    blink_debounce_frames: 3     # ignore re-trigger within N frames of a blink
+    mood_history_frames: 15      # majority-vote mood over last N frames
+
+  # ── Vision → LLM bridge ─────────────────────────────────────────
+  bridge:
+    include_in_llm_context: true   # pass vision labels to llama3 as context each turn
+    context_template: "[Vision] Face: {face_present}, Mood: {mood}, Gesture: {gesture}, Head: {head_zone}"
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 17. UI  ──  gradio app
 # ─────────────────────────────────────────────────────────────────────
 ui:
   app_title: "Multimodal HCI Assistant"
   app_subtitle: "Text + Voice + Vision  |  llama3 (Ollama) + Whisper + OpenCV"
   server_port: 7860
-  share: false                   # true = create a public gradio.live link (needs internet)
+  share: false   # true = create a public gradio.live link (needs internet — exam-day: false)
