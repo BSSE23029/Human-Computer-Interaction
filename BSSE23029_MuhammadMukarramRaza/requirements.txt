@@ -1,11 +1,27 @@
-# Official Pre-Exam install list (run at HOME, you have no internet on exam day).
-# One command:
-#   pip install gradio openai opencv-python Pillow openai-whisper SpeechRecognition PyAudio sounddevice soundfile pydub numpy requests python-dotenv
+# ── Official Pre-Exam install list ───────────────────────────────────────────
+# Run at HOME (no internet on exam day):
+#   uv pip install -r requirements.txt
+#   OR: pip install -r requirements.txt
 #
-# If PyAudio fails on Windows:   pip install pipwin   then   pipwin install pyaudio
-# Also required (system-level, NOT pip):  ffmpeg      (winget install ffmpeg)
-# Also required:  Ollama  + `ollama pull llama3`  + whisper 'base' model cached.
-# (PyYAML is pulled in automatically by gradio; config.json is the fallback.)
+# Apple Silicon (M1/M2/M3): use mediapipe-silicon, NOT mediapipe
+#   uv pip install "mediapipe-silicon>=0.9.2.1"
+# Intel Mac / Linux / Windows:
+#   uv pip install mediapipe
+#
+# PyAudio on Windows:   pip install pipwin  →  pipwin install pyaudio
+#
+# System-level (NOT pip):
+#   ffmpeg  →  mac: brew install ffmpeg  |  win: winget install ffmpeg
+#
+# Offline models (download at home, used offline on exam day):
+#   Ollama + model:   ollama pull llama3           (~4.7 GB)
+#   Whisper base:     python -c "import whisper; whisper.load_model('base')"
+#   Whisper small:    python -c "import whisper; whisper.load_model('small')"
+#   YuNet face model: models/yunet.onnx            (227 KB, already in repo)
+#   FER emotion:      models/emotion_ferplus.onnx  (33 MB, already in repo)
+#
+# PyYAML ships with gradio — config.json is the fallback if it ever fails.
+# ─────────────────────────────────────────────────────────────────────────────
 
 gradio
 openai

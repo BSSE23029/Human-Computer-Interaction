@@ -65,46 +65,84 @@ def _tab_enabled(tab: str) -> bool:
 
 
 def _make_meta(ctx: dict) -> str:
+    """
+    Build the small metadata line shown under each assistant reply.
+    Only includes tier and category when those features actually ran.
+    When scale or categories is disabled, those slots are omitted — no '?' noise.
+    """
+    from core.conf import get as _get
     scale_r = ctx.get("scale", {})
     cls_r   = ctx.get("classify", {})
     turn    = ctx.get("log", {}).get("turn", "?")
     src     = ctx.get("source", "text")
-    tier    = scale_r.get("tier", "?") if not scale_r.get("_skipped") else "?"
-    emoji   = scale_r.get("emoji", "") if not scale_r.get("_skipped") else ""
-    cat     = cls_r.get("primary", "?") if not cls_r.get("_skipped") else "?"
-    return f"\n\n_{emoji} {tier} · {cat} · turn {turn} ({src})_"
+
+    parts = []
+
+    # tier — only show if scale ran and produced a real value
+    if (not scale_r.get("_skipped")
+            and _get("scale.enabled", True)
+            and scale_r.get("tier") not in (None, "UNKNOWN", "?")):
+        emoji = scale_r.get("emoji", "")
+        tier  = scale_r.get("tier", "")
+        parts.append(f"{emoji} {tier}".strip())
+
+    # category — only show if classify ran and found something meaningful
+    if (not cls_r.get("_skipped")
+            and _get("categories.enabled", True)
+            and cls_r.get("primary") not in (None, "GENERAL", "?")):
+        parts.append(cls_r["primary"])
+
+    parts.append(f"turn {turn} ({src})")
+    return "\n\n_" + " · ".join(parts) + "_"
 
 
 # ── vision background thread ──────────────────────────────────────────────────
 def _vision_worker():
     """
-    Camera capture + OpenCV detection loop.
-    Writes to LIVE.vision (frame + label) every frame.
-    HUD overlays are drawn from config.yaml vision.hud.layout.
+    Camera capture + detection loop.
+    Draws face mesh + hand mesh on every frame.
+    Elegant status bar at the bottom instead of scattered corner text.
+    Frame-skip + downscale for performance.
     """
     import cv2
     from collections import Counter
-    from vision.faces import detect_faces, is_smiling, head_zone, _gray, detect_eyes
-    from vision.hands import count_fingers as _count_fingers, classify_gesture
+    from vision.backend import BACKEND, print_backend_summary
+    from vision.faces import (detect_faces, mood_of, head_zone,
+                               head_zone_landmarks, get_face_landmarks,
+                               _gray, detect_eyes, make_blink_processor)
+    from vision.hands import count_all_hands
+    from vision.lips import LipAnalyser
+    from vision.draw import (draw_face_mesh, draw_face_box,
+                              draw_status_bar, draw_ear_gauge,
+                              draw_corner_badge, draw_chip,
+                              hud_color, mood_color,
+                              _CYAN, _WHITE, _GREEN, _RED, _AMBER)
 
-    idx        = int(get("vision.webcam_index", 0))
-    flip       = bool(get("vision.flip_webcam", True))
-    w          = int(get("vision.display.width",  640))
-    h          = int(get("vision.display.height", 480))
-    layout     = get("vision.hud.layout") or {}
-    f_scale    = float(get("vision.hud.font_scale", 0.7))
-    thick      = int(get("vision.hud.thickness", 2))
-    col_def    = tuple(get("vision.hud.color_default",  [0, 255, 0]))
-    col_warn   = tuple(get("vision.hud.color_warning",  [0, 0, 255]))
-    col_info   = tuple(get("vision.hud.color_info",     [255, 255, 0]))
-    g_hold     = int(get("vision.stability.gesture_hold_frames", 5))
-    m_hist     = int(get("vision.stability.mood_history_frames", 15))
-    target_fps = max(int(get("vision.display.stream_fps", 15)), 1)
+    print_backend_summary()
 
-    gest_buf, mood_buf         = [], []
-    blink_state                = {"blinks": 0, "closed": False, "closed_frames": 0}
-    drowsy_frames              = 0
-    fps_val, frame_cnt, t0     = 0.0, 0, time.time()
+    idx          = int(get("vision.webcam_index", 0))
+    flip         = bool(get("vision.flip_webcam", True))
+    w            = int(get("vision.display.width",  640))
+    h            = int(get("vision.display.height", 480))
+    m_hist       = int(get("vision.stability.mood_history_frames", 15))
+    target_fps   = max(int(get("vision.display.stream_fps", 15)), 1)
+    detect_n     = max(1, int(get("vision.detect_every_n", 3)))
+    detect_scale = float(get("vision.detect_scale", 0.5))
+    EAR_TH       = float(get("vision.blink.ear_closed_threshold", 0.25))
+
+    _det = {
+        "face_boxes": [], "present": False, "mood": "no_face",
+        "zone": "Forward", "hands": [], "is_drowsy": False,
+        "face_landmarks": None, "vowel": "?", "vowel_conf": 0.0,
+    }
+    _blink_proc, _blink_state = make_blink_processor()
+    _lip = LipAnalyser()   # stateful — keeps EMA + majority-vote buffer across frames
+    mood_buf         = []
+    drowsy_frames    = 0
+    fps_val          = 0.0
+    frame_cnt        = 0
+    detect_frame_cnt = 0
+    t0               = time.time()
 
     cap = cv2.VideoCapture(idx)
     if not cap.isOpened():
@@ -121,119 +159,151 @@ def _vision_worker():
             if flip:
                 frame = cv2.flip(frame, 1)
             frame = cv2.resize(frame, (w, h))
-            gray  = _gray(frame)
+            frame_cnt        += 1
+            detect_frame_cnt += 1
 
-            face_boxes = (detect_faces(gray)
-                          if get("vision.face_detect.enabled", True) else [])
-            present    = len(face_boxes) > 0
-
-            # blink
-            if get("vision.blink.enabled", True) and present:
-                x, y, fw_, fh_ = face_boxes[0]
-                eyes = detect_eyes(gray[y:y + fh_//2, x:x + fw_])
-                need = int(get("vision.blink.eyes_closed_frames", 2))
-                if not eyes:
-                    blink_state["closed_frames"] += 1
-                    if blink_state["closed_frames"] >= need:
-                        blink_state["closed"] = True
+            # ── DETECTION (every N frames, downscaled) ──────────────
+            if detect_frame_cnt >= detect_n:
+                detect_frame_cnt = 0
+                if detect_scale < 1.0:
+                    small = cv2.resize(frame, (int(w*detect_scale), int(h*detect_scale)))
                 else:
-                    if blink_state["closed"]:
-                        blink_state["blinks"] += 1
-                    blink_state["closed"] = False
-                    blink_state["closed_frames"] = 0
+                    small = frame
 
-            # drowsy
-            is_drowsy = False
-            if get("vision.drowsy.enabled", True) and present:
-                x, y, fw_, fh_ = face_boxes[0]
-                eyes = detect_eyes(gray[y:y + fh_//2, x:x + fw_])
-                drowsy_frames = drowsy_frames + 1 if not eyes else 0
-                is_drowsy = drowsy_frames >= int(get("vision.drowsy.closed_frames_alert", 20))
+                raw_boxes = (detect_faces(small)
+                             if get("vision.face_detect.enabled", True) else [])
+                if detect_scale < 1.0 and raw_boxes:
+                    inv = 1.0 / detect_scale
+                    raw_boxes = [(int(x*inv), int(y*inv), int(bw*inv), int(bh*inv))
+                                 for (x, y, bw, bh) in raw_boxes]
+                _det["face_boxes"] = raw_boxes
+                _det["present"]    = bool(raw_boxes)
 
-            # mood
-            raw_mood = "no_face"
-            if get("vision.smile_mood.enabled", True) and present:
-                x, y, fw_, fh_ = face_boxes[0]
-                roi      = gray[y:y + fh_, x:x + fw_]
-                raw_mood = "smiling" if is_smiling(roi) else "neutral"
-            mood_buf.append(raw_mood)
-            if len(mood_buf) > m_hist:
-                mood_buf.pop(0)
-            mood = Counter(mood_buf).most_common(1)[0][0] if mood_buf else "no_face"
+                # face landmarks (full resolution — mesh quality matters)
+                _det["face_landmarks"] = get_face_landmarks(frame)
 
-            # head zone
-            zone = "Center"
-            if get("vision.head_pose.enabled", True) and present:
-                zone = head_zone(face_boxes[0], frame.shape)
+                # vowel / lip reading — reuses already-computed landmarks
+                if (BACKEND == "mediapipe" and _det["face_landmarks"]
+                        and get("vision.lip.classifier", "fuzzy")):
+                    try:
+                        lm = _det["face_landmarks"][0].landmark
+                        _det["vowel"]      = _lip.update(lm, w, h)
+                        _det["vowel_conf"] = round(_lip.last_confidence, 2)
+                    except Exception:
+                        pass
 
-            # gesture
-            raw_gest, g_emoji = "none", ""
-            if get("vision.gesture.enabled", True):
-                count, _ = _count_fingers(frame)
-                g_name, g_emoji = classify_gesture(count)
-                gest_buf.append((g_name, g_emoji, count > 0))
-                if len(gest_buf) > g_hold:
-                    gest_buf.pop(0)
-                if len(gest_buf) == g_hold and len({n for n, _, _ in gest_buf}) == 1:
-                    raw_gest, g_emoji = gest_buf[0][0], gest_buf[0][1]
-                    if not gest_buf[0][2]:
-                        raw_gest = "none"
+                # mood (majority vote)
+                raw_mood = mood_of(small) if _det["present"] else "no_face"
+                mood_buf.append(raw_mood)
+                if len(mood_buf) > m_hist: mood_buf.pop(0)
+                _det["mood"] = Counter(mood_buf).most_common(1)[0][0] if mood_buf else "no_face"
 
-            # fps
-            frame_cnt += 1
-            elapsed    = time.time() - t0
+                # head zone — landmark-based if MP, bbox-based otherwise
+                _det["zone"] = "Forward"
+                if _det["present"]:
+                    if _det["face_landmarks"]:
+                        _det["zone"] = head_zone_landmarks(
+                            _det["face_landmarks"][0].landmark, w, h)
+                    else:
+                        _det["zone"] = head_zone(_det["face_boxes"][0], frame.shape)
+
+                # drowsy (non-MP path only; MP uses EAR inside blink proc)
+                if BACKEND != "mediapipe" and get("vision.drowsy.enabled", True):
+                    if _det["present"]:
+                        gray_ = _gray(frame)
+                        x_, y_, fw_, fh_ = _det["face_boxes"][0]
+                        eyes_ = detect_eyes(gray_[y_:y_+fh_//2, x_:x_+fw_])
+                        drowsy_frames = drowsy_frames + 1 if not eyes_ else 0
+                        _det["is_drowsy"] = (drowsy_frames >=
+                            int(get("vision.drowsy.closed_frames_alert", 20)))
+                    else:
+                        drowsy_frames = 0; _det["is_drowsy"] = False
+
+                # hands (full resolution for accuracy)
+                if get("vision.gesture.enabled", True):
+                    _det["hands"] = count_all_hands(frame)   # also draws hand mesh
+
+            # ── BLINK (every frame) ──────────────────────────────────
+            if get("vision.blink.enabled", True):
+                _blink_proc(frame)
+
+            # ── FPS ──────────────────────────────────────────────────
+            elapsed = time.time() - t0
             if elapsed >= 1.0:
-                fps_val      = frame_cnt / elapsed
+                fps_val       = frame_cnt / elapsed
                 frame_cnt, t0 = 0, time.time()
 
-            # HUD
-            wb_last   = LIVE.session.wellbeing_log[-1] if LIVE.session and LIVE.session.wellbeing_log else {}
-            elem_text = {
-                "fps":       f"FPS: {fps_val:.1f}",
-                "tier":      f"{wb_last.get('emoji','')} {wb_last.get('tier','')}".strip(),
-                "score":     f"Score: {wb_last.get('score',0):+.2f}" if wb_last else "",
-                "turn":      f"Turn: {LIVE.session.n_turns}" if LIVE.session else "",
-                "blink":     f"Blinks: {blink_state['blinks']}",
-                "drowsy":    get("vision.drowsy.alert_message","DROWSY!") if is_drowsy else "",
-                "head_zone": f"Head: {zone}" if zone != "Center" else "",
-                "gesture":   f"{raw_gest} {g_emoji}".strip() if raw_gest != "none" else "",
-                "mood":      f"Mood: {mood}" if mood != "no_face" else "",
-            }
-            elem_col = {
-                "fps": col_info, "tier": col_def, "score": col_def,
-                "turn": col_info, "blink": col_def, "drowsy": col_warn,
-                "head_zone": col_info, "gesture": col_def, "mood": col_def,
-            }
+            # ── DRAW FACE MESH (on every frame, full res) ────────────
+            if _det["face_landmarks"]:
+                for fl in _det["face_landmarks"]:
+                    draw_face_mesh(frame, fl, h, w)
 
-            def _draw_corner(names, sx, sy, right=False):
-                yp = sy
-                for nm in names:
-                    txt = elem_text.get(nm, "")
-                    if not txt:
-                        continue
-                    col = elem_col.get(nm, col_def)
-                    (tw, _), _ = cv2.getTextSize(txt, cv2.FONT_HERSHEY_SIMPLEX, f_scale, thick)
-                    xp = sx - tw - 4 if right else sx
-                    cv2.rectangle(frame, (xp-2, yp-18), (xp+tw+4, yp+4), (0,0,0), -1)
-                    cv2.putText(frame, txt, (xp, yp),
-                                cv2.FONT_HERSHEY_SIMPLEX, f_scale, col, thick, cv2.LINE_AA)
-                    yp += 28
+            # ── FACE BOXES (corner brackets only, elegant) ───────────
+            m_col = mood_color(_det["mood"])
+            for box in _det["face_boxes"]:
+                draw_face_box(frame, box, m_col)
 
-            _draw_corner(layout.get("top_left",    []),  10,   28)
-            _draw_corner(layout.get("top_right",   []),  w-10, 28,  right=True)
-            _draw_corner(layout.get("bottom_left", []),  10,   h-80)
-            _draw_corner(layout.get("bottom_right",[]),  w-10, h-80, right=True)
+            # ── EAR GAUGE (top-left corner, small) ───────────────────
+            ear = _blink_state.get("ear", 0.3)
+            draw_ear_gauge(frame, ear, (8, 8), width=50, height=6, threshold=EAR_TH)
 
-            for (x, y, fw_, fh_) in face_boxes:
-                cv2.rectangle(frame, (x, y), (x+fw_, y+fh_), col_def, 2)
+            # ── WELLBEING CHIP (top-right) ────────────────────────────
+            wb_last = (LIVE.session.wellbeing_log[-1]
+                       if LIVE.session and LIVE.session.wellbeing_log else {})
+            if wb_last and not wb_last.get("_skipped"):
+                tier_str = f"{wb_last.get('emoji','')} {wb_last.get('tier','')}".strip()
+                t_col    = hud_color(wb_last.get("tier",""))
+                draw_chip(frame, tier_str, (w - 110, 22), t_col)
 
-            # update LIVE provider
+            # ── BACKEND BADGE (top-right corner, tiny) ───────────────
+            draw_corner_badge(frame, f"{BACKEND} {fps_val:.0f}fps", "tr")
+
+            # ── STATUS BAR (bottom panel) ─────────────────────────────
+            hands    = _det.get("hands", [])
+            raw_gest = hands[0].get("gesture","none") if hands else "none"
+            g_emoji  = hands[0].get("emoji","")       if hands else ""
+
+            drowsy_col = _RED   if _blink_state.get("drowsy") or _det.get("is_drowsy") else _GREEN
+            zone_col   = _AMBER if _det["zone"] not in ("Forward","Center","no_face") else _CYAN
+
+            slots = []
+            if _det["mood"] != "no_face":
+                slots.append((f"Mood: {_det['mood']}", m_col))
+            slots.append((f"Head: {_det['zone']}", zone_col))
+            slots.append((f"Blinks: {_blink_state['blinks']}", _CYAN))
+            if _blink_state.get("drowsy") or _det.get("is_drowsy"):
+                slots.append(("⚠ DROWSY", _RED))
+            # vowel — only show when confident (not "?" or "neutral"/"smile")
+            vowel = _det.get("vowel", "?")
+            vconf = _det.get("vowel_conf", 0.0)
+            if BACKEND == "mediapipe" and vowel in "AEIOU" and vconf > 0:
+                slots.append((f"Vowel: {vowel} ({vconf:.2f})", _AMBER))
+            if raw_gest != "none":
+                if len(hands) > 1:
+                    slots.append((" | ".join(
+                        f"{hd['hand']}:{hd['gesture']} {hd['emoji']}"
+                        for hd in hands), _WHITE))
+                else:
+                    slots.append((f"{raw_gest} {g_emoji}", _WHITE))
+            if LIVE.session and LIVE.session.n_turns > 0:
+                slots.append((f"T{LIVE.session.n_turns}", _CYAN))
+
+            draw_status_bar(frame, slots)
+
+            # ── LIVE PROVIDER ─────────────────────────────────────────
             label = {
-                "present":   present, "faces": len(face_boxes),
-                "mood":      mood,    "head_zone": zone,
-                "gesture":   raw_gest,"fingers":   0,
-                "blinks":    blink_state["blinks"],
-                "is_drowsy": is_drowsy,
+                "present":   _det["present"],
+                "faces":     len(_det["face_boxes"]),
+                "mood":      _det["mood"],
+                "head_zone": _det["zone"],
+                "vowel":     _det.get("vowel", "?"),
+                "gesture":   raw_gest,
+                "fingers":   hands[0].get("fingers", 0) if hands else 0,
+                "blinks":    _blink_state["blinks"],
+                "is_drowsy": _blink_state.get("drowsy") or _det.get("is_drowsy", False),
+                "backend":   BACKEND,
+                "all_hands": hands,
+                "ear":       ear,
             }
             LIVE.vision.update(frame.copy(), label)
 
@@ -530,9 +600,26 @@ def build_app():
                     gr.Button("⏹ Stop camera").click(_stop_vision, None, None)
 
                 gr.Markdown(
-                    "_Standalone windows:_  \n"
-                    "`python -c \"from vision.faces import run_blink; run_blink()\"`  \n"
-                    "`python -c \"from vision.hands import run_gesture; run_gesture()\"`"
+                    "**Standalone windows** (run in a separate terminal):  \n"
+                    "```\n"
+                    "# Face modalities\n"
+                    "python -c \"from vision.faces import run_blink;     run_blink()\"\n"
+                    "python -c \"from vision.faces import run_drowsy;    run_drowsy()\"\n"
+                    "python -c \"from vision.faces import run_mood;      run_mood()\"\n"
+                    "python -c \"from vision.faces import run_head_pose; run_head_pose()\"\n"
+                    "python -c \"from vision.faces import run_all_face;  run_all_face()\"\n"
+                    "\n"
+                    "# Hand modalities\n"
+                    "python -c \"from vision.hands import run_gesture;      run_gesture()\"\n"
+                    "python -c \"from vision.hands import run_finger_count; run_finger_count()\"\n"
+                    "\n"
+                    "# Lip / vowel reading  (MediaPipe required)\n"
+                    "python -c \"from vision.lips import run_lips; run_lips()\"\n"
+                    "\n"
+                    "# Color tracking & motion\n"
+                    "python -c \"from vision.color_motion import run_color;  run_color('red')\"\n"
+                    "python -c \"from vision.color_motion import run_motion; run_motion()\"\n"
+                    "```"
                 )
 
         # ── 📋 Report tab ──────────────────────────────────────────

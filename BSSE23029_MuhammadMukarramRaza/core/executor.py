@@ -115,7 +115,7 @@ def _stage_enabled(tab: str, stage_name: str) -> bool:
 # These are injected when a stage is disabled or fails with no fallback method.
 
 _NULL: dict[str, Any] = {
-    "stt_result":   {"text": "", "language": "?", "confidence": "low", "_skipped": True},
+    "stt":          {"text": "", "language": "?", "confidence": "low", "_skipped": True},
     "text_raw":     {"text": "", "_skipped": True},
     "vision_label": {"present": False, "faces": 0, "mood": "no_face",
                      "head_zone": None, "gesture": "none", "fingers": 0, "_skipped": True},
@@ -232,7 +232,7 @@ def _run_stage(name: str, cfg: dict, ctx: dict, tab: str) -> dict:
 def _write_aliases(stage_name: str, result: Any, ctx: dict) -> None:
     """Write stage output to convenient top-level ctx keys for downstream stages."""
     _ALIASES = {
-        "stt_result":    lambda r: ctx.update({"stt_text": r.get("text", "") if isinstance(r, dict) else ""}),
+        "stt":           lambda r: ctx.update({"stt_text": r.get("text", "") if isinstance(r, dict) else ""}),
         "fuser":         lambda r: ctx.update({
                             "text":       r.get("text", "")       if isinstance(r, dict) else "",
                             "source":     r.get("source", "none") if isinstance(r, dict) else "none",

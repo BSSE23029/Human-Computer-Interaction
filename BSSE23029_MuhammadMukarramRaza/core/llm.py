@@ -85,15 +85,53 @@ def warm_up() -> None:
 
 
 # ── persona / system prompt ───────────────────────────────────────────────────
-def persona_system() -> str:
-    """Build the system prompt string from the active persona in config."""
-    name = get("llm.active_persona", "default")
-    persona = get(f"llm.personas.{name}")
-    if persona:
-        # personas are stored as full sentences starting with "You are..."
-        return persona if persona.startswith("You are") else f"You are {persona}"
-    # absolute fallback
-    return get("llm.system_prompt", "You are a concise, helpful assistant.")
+def persona_system(name: str = None) -> str:
+    """
+    Build the full system prompt from the active persona.
+
+    Personas are now complete system prompts:
+        [SYSTEM CONTEXT]
+        You are ...
+        {vision_context}
+        TASK / OUTPUT / RULES ...
+
+    {vision_context} is filled here from LIVE.vision if the camera is running
+    and a face is detected.  When the camera is off or the frame is stale,
+    it is replaced with the empty string (no noise injected).
+
+    Override the persona by passing `name` directly, or leave as None to
+    read `llm.active_persona` from config.
+    """
+    persona_name = name or get("llm.active_persona", "default")
+    template     = get(f"llm.personas.{persona_name}")
+
+    if not template:
+        # absolute fallback — works even if config missing
+        return get("llm.system_prompt", "You are a concise, helpful assistant.")
+
+    # ── fill {vision_context} slot ────────────────────────────────────────
+    if "{vision_context}" in template:
+        try:
+            from core.provider import LIVE
+            label = LIVE.vision_snapshot()
+            if label.get("present") and not label.get("_stale"):
+                vis_tmpl = get("llm.vision_context_template",
+                               "Webcam: {num_faces} face(s) visible. Mood: {mood}. Gesture: {gesture}. Head: {head_zone}.")
+                vis_ctx = vis_tmpl.format(
+                    num_faces = label.get("faces", 1),
+                    mood      = label.get("mood",      "unknown"),
+                    gesture   = label.get("gesture",   "none"),
+                    head_zone = label.get("head_zone", "unknown"),
+                    blinks    = label.get("blinks",    0),
+                )
+            else:
+                vis_ctx = get("llm.vision_context_empty", "")
+        except Exception:
+            vis_ctx = get("llm.vision_context_empty", "")
+
+        template = template.replace("{vision_context}", vis_ctx)
+
+    return template.strip()
 
 
 def build_prompt(name: str, **vars) -> str:

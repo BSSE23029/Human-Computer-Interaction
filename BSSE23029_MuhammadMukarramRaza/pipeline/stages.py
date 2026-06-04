@@ -83,7 +83,7 @@ def run_fuser(cfg: dict, ctx: dict) -> dict:
     priority = sub_cfg.get("priority", ["voice", "text", "vision"])
 
     def _from_stt():
-        r = ctx.get("stt_result") or {}
+        r = ctx.get("stt") or {}          # stage name is "stt", not "stt_result"
         if r.get("_skipped"):
             return None
         t = r.get("text", "").strip()

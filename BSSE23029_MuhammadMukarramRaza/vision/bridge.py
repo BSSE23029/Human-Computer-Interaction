@@ -57,7 +57,10 @@ def frame_to_label(frame) -> dict:
 
 
 def vision_context_string(label: dict) -> str:
-    """Human-readable sentence for an LLM prompt."""
+    """
+    Human-readable sentence injected into the LLM system prompt.
+    Includes all active detection outputs so llama3 has full context.
+    """
     if not label or not label.get("present"):
         return "No person is visible on camera."
     bits = ["A person is visible on camera"]
@@ -65,11 +68,17 @@ def vision_context_string(label: dict) -> str:
     if mood and mood not in ("no_face", ""):
         bits.append(f"and appears {mood}")
     zone = label.get("head_zone", "")
-    if zone and zone not in ("Center", "", None):
+    if zone and zone not in ("Center", "Forward", "", None):
         bits.append(f"(head turned {zone.lower()})")
     gesture = label.get("gesture", "none")
     if gesture and gesture != "none":
         bits.append(f"showing a '{gesture}' hand gesture")
+    vowel = label.get("vowel", "?")
+    if vowel and vowel in "AEIOU":
+        bits.append(f"mouthing the vowel '{vowel}'")
+    drowsy = label.get("is_drowsy", False)
+    if drowsy:
+        bits.append("and appears drowsy")
     return " ".join(bits) + "."
 
 

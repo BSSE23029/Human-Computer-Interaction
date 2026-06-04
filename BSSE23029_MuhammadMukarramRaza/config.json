@@ -13,11 +13,55 @@
     "max_tokens": 512,
     "timeout_seconds": 60,
     "active_persona": "default",
+    "persona_disable_map": {
+      "default": {},
+      "tutor": {},
+      "support": {},
+      "advisor": {},
+      "ner_extractor": {
+        "sentiment": true,
+        "scale": true,
+        "categories": true,
+        "scoring": true
+      },
+      "text_classifier": {
+        "categories": true
+      },
+      "intent_detector": {
+        "categories": true
+      },
+      "translator": {
+        "sentiment": true,
+        "scale": true,
+        "categories": true,
+        "scoring": true
+      },
+      "qa_engine": {
+        "sentiment": true,
+        "scale": true,
+        "categories": true
+      },
+      "generator": {
+        "sentiment": true,
+        "scale": true,
+        "categories": true,
+        "responses": true,
+        "scoring": true
+      }
+    },
+    "vision_context_template": "Webcam: {num_faces} face(s) visible. Mood: {mood}. Gesture: {gesture}. Head: {head_zone}. Blinks: {blinks}.",
+    "vision_context_empty": "",
     "personas": {
-      "default": "You are a concise, empathetic university wellbeing assistant. Reply in 1-3 supportive sentences.",
-      "tutor": "You are a patient academic tutor. Explain clearly and encourage the student.",
-      "support": "You are a calm, professional customer-service agent. Be polite and solution-focused.",
-      "advisor": "You are a career advisor helping students plan their next steps."
+      "default": "[SYSTEM CONTEXT]\nYou are a concise, empathetic university wellbeing assistant.\n{vision_context}\n\nReply in 1–3 supportive, natural sentences.\nDo not repeat what the user said back to them.\nDo not ask more than one question per reply.\n",
+      "tutor": "[SYSTEM CONTEXT]\nYou are a patient academic tutor.\n{vision_context}\n\nExplain clearly, use examples, and encourage the student.\nKeep replies focused: one concept at a time.\n",
+      "support": "[SYSTEM CONTEXT]\nYou are a calm, professional customer-service agent.\n{vision_context}\n\nBe polite, solution-focused, and concise.\nAcknowledge the issue before offering a solution.\n",
+      "advisor": "[SYSTEM CONTEXT]\nYou are a career advisor helping students plan their next steps.\n{vision_context}\n\nBe practical and specific. Suggest concrete actions.\nAvoid vague encouragement — give real next steps.\n",
+      "ner_extractor": "[SYSTEM CONTEXT]\nYou are a Named Entity Recognition engine.\n{vision_context}\n\nTASK: Extract all named entities from the user's text.\n\nOUTPUT: Return ONLY a valid JSON object with exactly these keys:\n  \"person\"   — list of person names        ([] if none)\n  \"location\" — list of place/location names ([] if none)\n  \"date\"     — list of date expressions     ([] if none)\n  \"time\"     — list of time expressions     ([] if none)\n\nRULES:\n- Output the JSON object only. No introduction, no explanation, no markdown.\n- If a category has no entities, use an empty list [].\n- Normalise dates to YYYY-MM-DD where possible; keep original form otherwise.\n- Do NOT invent entities that are not explicitly in the text.\n",
+      "text_classifier": "[SYSTEM CONTEXT]\nYou are a precision text classification engine.\n{vision_context}\n\nTASK: Assign the user's message to exactly one category from the list provided.\n\nOUTPUT: The category label only — one word or short phrase, no punctuation around it.\n\nRULES:\n- Choose the label that best captures the PRIMARY subject.\n- If multiple categories apply, pick the most dominant one.\n- Never explain your choice. Never add anything outside the label.\n",
+      "intent_detector": "[SYSTEM CONTEXT]\nYou are an intent detection system.\n{vision_context}\n\nTASK: Identify the PRIMARY intent — the user's core goal or desired action —\nfrom the message below.\n\nOUTPUT: One intent label from the provided list. Nothing else.\n\nRULES:\n- Focus on what the user wants to DO or ACHIEVE, not what they mention.\n- If the user is venting (no clear request), label it: express_distress.\n- Never explain. Never add context. One label only.\n",
+      "translator": "[SYSTEM CONTEXT]\nYou are a professional bilingual translator.\n{vision_context}\n\nTASK: Translate the user's text between the specified languages.\n\nOUTPUT: The translated text only. No original, no explanation, no label.\n\nRULES:\n- Preserve the original meaning, tone, and register exactly.\n- Adapt idioms to natural equivalents in the target language.\n- Formal source → formal translation. Casual source → casual translation.\n- Do not add, remove, or summarise any content.\n",
+      "qa_engine": "[SYSTEM CONTEXT]\nYou are a closed-book question-answering system.\n{vision_context}\n\nTASK: Answer the user's question using ONLY the provided context.\n\nRULES:\n- If the answer is in the context: quote the key part, then give a direct answer.\n- If the answer is NOT in the context: reply exactly —\n    \"Not found in the provided context.\"\n- No speculation. No outside knowledge. No apologies. No padding.\n- Be direct: answer first, brief explanation if necessary.\n",
+      "generator": "[SYSTEM CONTEXT]\nYou are a fluent natural language generation engine.\n{vision_context}\n\nTASK: Complete, continue, or generate the text as instructed by the user.\n\nRULES:\n- Match the tone, register, and style of the input exactly.\n- Be natural and fluent — avoid robotic or formulaic phrasing.\n- Do not add unsolicited commentary, disclaimers, or meta-text.\n- Output only the generated content.\n"
     },
     "context_window": 0,
     "offline_fallback": true,
@@ -27,7 +71,7 @@
       "multilabel": "From these labels: {labels}, list ALL that apply.\nReply with ONLY a comma-separated list of labels, nothing else.\nMessage: {text}\nLabels:",
       "score": "Rate the {criterion} of this message on a scale from {lo} to {hi}.\nReply with ONLY a number, nothing else.\nMessage: {text}\nNumber:",
       "extract": "Extract these fields and reply with ONLY a valid JSON object using exactly these keys: {fields}.\nMessage: {text}\nJSON:",
-      "respond": "{persona}\nContext — emotional tier: {tier}, support category: {category}.\nRespond to the following message in 1-3 empathetic sentences:\n{text}",
+      "respond": "{text}",
       "summarize": "Summarize the conversation below in about {max_words} words for {audience}.\nConversation:\n{conversation}\nSummary:"
     }
   },
@@ -313,6 +357,27 @@
         "HR",
         "document"
       ]
+    },
+    "GENERAL": {
+      "escalation_target": false,
+      "response_priority": 0,
+      "keywords": [
+        "help",
+        "please",
+        "need",
+        "support",
+        "okay",
+        "hi",
+        "hello",
+        "hey",
+        "issue",
+        "problem",
+        "situation",
+        "something",
+        "anything",
+        "wondering",
+        "question"
+      ]
     }
   },
   "intents": {
@@ -461,6 +526,46 @@
     "webcam_index": 0,
     "flip_webcam": true,
     "wait_key_ms": 1,
+    "backend": "auto",
+    "detect_every_n": 3,
+    "detect_scale": 0.5,
+    "mediapipe": {
+      "max_faces": 2,
+      "max_hands": 2,
+      "min_detection_confidence": 0.7,
+      "min_tracking_confidence": 0.7
+    },
+    "yunet": {
+      "confidence": 0.6
+    },
+    "blink": {
+      "enabled": true,
+      "eyes_closed_frames": 2,
+      "ear_closed_threshold": 0.25
+    },
+    "drowsy": {
+      "enabled": true,
+      "closed_frames_alert": 20,
+      "awake_recovery_frames": 5,
+      "alert_message": "DROWSY! Wake up!"
+    },
+    "lip": {
+      "classifier": "fuzzy",
+      "mar_threshold_a": 0.5,
+      "mar_threshold_e": 0.22,
+      "mar_threshold_i": 0.22,
+      "width_ratio_wide": 0.42,
+      "width_ratio_round": 0.38,
+      "smile_width_threshold": 0.35,
+      "confidence_floor": 0.42
+    },
+    "smoothing": {
+      "ema_alpha": 0.35,
+      "gesture_history": 12,
+      "vowel_history": 12,
+      "kalman_process_noise": 0.001,
+      "kalman_measure_noise": 0.1
+    },
     "haar": {
       "face": "haarcascade_frontalface_default.xml",
       "eye": "haarcascade_eye.xml",
@@ -473,24 +578,21 @@
     "face_detect": {
       "enabled": true
     },
-    "blink": {
-      "enabled": true,
-      "eyes_closed_frames": 2
-    },
-    "drowsy": {
-      "enabled": true,
-      "closed_frames_alert": 20,
-      "alert_message": "DROWSY! Eyes open!"
-    },
     "head_pose": {
       "enabled": true,
       "deadzone_ratio": 0.15
+    },
+    "head_zones": {
+      "up_ratio": 0.2,
+      "down_ratio": 0.42
     },
     "smile_mood": {
       "enabled": true
     },
     "gesture": {
       "enabled": true,
+      "hold_seconds": 1.0,
+      "high_five_y_ratio": 1.6,
       "skin_ycrcb": {
         "lower": [
           0,
@@ -669,7 +771,7 @@
     {
       "name": "vision_input",
       "type": "vision_input",
-      "enabled": false,
+      "enabled": true,
       "method": "bridge",
       "fallback": {
         "true": "failure",
@@ -702,7 +804,7 @@
     {
       "name": "context_inject",
       "type": "context_injector",
-      "enabled": false,
+      "enabled": true,
       "method": "context",
       "fallback": {
         "true": "failure",
@@ -712,10 +814,15 @@
       },
       "config": {
         "score_weights": {
-          "smiling": 0.3,
+          "happy": 0.3,
           "neutral": 0.0,
+          "surprised": 0.1,
+          "sad": -0.25,
+          "angry": -0.3,
+          "sleepy": -0.2,
           "no_face": -0.1,
-          "drowsy": -0.4
+          "Thumbs Up": 0.2,
+          "Fist": -0.15
         }
       }
     },
@@ -803,7 +910,7 @@
     {
       "name": "tts",
       "type": "output_tts",
-      "enabled": false,
+      "enabled": true,
       "method": "system",
       "fallback": {
         "true": "failure",
@@ -849,7 +956,9 @@
         "vision_input": {
           "enabled": false
         },
-        "context_inject:{enabled": "false}",
+        "context_inject": {
+          "enabled": true
+        },
         "tts": {
           "enabled": false
         }
@@ -878,7 +987,9 @@
         "vision_input": {
           "enabled": false
         },
-        "context_inject:{enabled": "false}",
+        "context_inject": {
+          "enabled": true
+        },
         "tts": {
           "enabled": true
         }
@@ -919,7 +1030,7 @@
       }
     },
     "multimodal": {
-      "enabled": false,
+      "enabled": true,
       "label": "🎭 Multimodal",
       "pipeline_order": [
         "stt",
@@ -941,7 +1052,7 @@
           "enabled": true
         },
         "text_input": {
-          "enabled": false
+          "enabled": true
         },
         "vision_input": {
           "enabled": true
@@ -963,7 +1074,7 @@
           "method": "context"
         },
         "tts": {
-          "enabled": false
+          "enabled": true
         }
       }
     },

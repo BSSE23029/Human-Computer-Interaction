@@ -48,13 +48,225 @@ llm:
   max_tokens: 512                         # cap on reply length
   timeout_seconds: 60                     # give up if Ollama hangs
 
-  active_persona: "default"              # change to any key in `personas` to re-theme
-  personas:                              # add more rows here; use in active_persona
-    default:  "You are a concise, empathetic university wellbeing assistant. Reply in 1-3 supportive sentences."
-    tutor:    "You are a patient academic tutor. Explain clearly and encourage the student."
-    support:  "You are a calm, professional customer-service agent. Be polite and solution-focused."
-    advisor:  "You are a career advisor helping students plan their next steps."
-    # healthcare: "You are a mental-health first-responder. Be calm, non-judgmental."
+  # These are the injectable slots any persona can use:
+  # Slot	Source	Example value
+  # {num_faces}	LIVE.vision	1
+  # {mood}	LIVE.vision	"happy"
+  # {gesture}	LIVE.vision	"Peace"
+  # {head_zone}	LIVE.vision	"Forward"
+  # {blinks}	LIVE.vision	5
+  # {tier}	LIVE.session last wb	"STRESSED"
+  # {category}	LIVE.session last support	"ACADEMIC"
+  # {turn}	LIVE.session	3
+  # {vision_context}	bridge.vision_context_string	"A person is visible and appears happy..."
+
+  active_persona: "default"    # swap to any key below on exam day — everything follows
+
+  # ── PERSONA DISABLE MAP ───────────────────────────────────────────
+  # use_persona(name) in exam_adapter reads this to turn off the right
+  # pipeline sections automatically.  true = disable that section.
+  persona_disable_map:
+    default:          {}
+    tutor:            {}
+    support:          {}
+    advisor:          {}
+    ner_extractor:    {sentiment: true, scale: true, categories: true, scoring: true}
+    text_classifier:  {categories: true}
+    intent_detector:  {categories: true}
+    translator:       {sentiment: true, scale: true, categories: true, scoring: true}
+    qa_engine:        {sentiment: true, scale: true, categories: true}
+    generator:        {sentiment: true, scale: true, categories: true, responses: true, scoring: true}
+
+  # ── VISION CONTEXT TEMPLATES ─────────────────────────────────────
+  # Personas that contain {vision_context} have this string injected at
+  # call time from LIVE.vision.  When the camera is off or stale, the
+  # empty string is used instead so no noise reaches the LLM.
+  vision_context_template: "Webcam: {num_faces} face(s) visible. Mood: {mood}. Gesture: {gesture}. Head: {head_zone}. Blinks: {blinks}."
+  vision_context_empty: ""     # injected when camera is off or frame is stale
+
+  # ── PERSONAS ─────────────────────────────────────────────────────
+  # Each persona is a FULL SYSTEM PROMPT:
+  #   [SYSTEM CONTEXT] → sets role + optional live vision data
+  #   TASK             → what the model must do
+  #   OUTPUT           → exact format required
+  #   RULES            → constraints, edge cases, prohibitions
+  #
+  # {vision_context} is filled automatically by persona_system() in llm.py.
+  # Leave it out of a persona to never inject vision data for that task.
+  #
+  # DISABLE MAP — what pipeline sections to turn off per persona:
+  #   default / tutor / support / advisor → keep everything ON
+  #   text_classifier / intent_detector   → categories.enabled: false
+  #   ner_extractor                       → categories.enabled: false
+  #                                          sentiment.enabled: false
+  #                                          scale.enabled: false
+  #   translator                          → sentiment.enabled: false
+  #                                          scale.enabled: false
+  #                                          categories.enabled: false
+  #                                          scoring.enabled: false
+  #   qa_engine                           → sentiment.enabled: false
+  #                                          scale.enabled: false
+  #                                          categories.enabled: false
+  #   generator                           → ALL deterministic stages: false
+  #                                          (sentiment, scale, categories,
+  #                                           responses, scoring)
+  personas:
+
+    # ── CONVERSATIONAL (default) ────────────────────────────────────
+    default: |
+      [SYSTEM CONTEXT]
+      You are a concise, empathetic university wellbeing assistant.
+      {vision_context}
+
+      Reply in 1–3 supportive, natural sentences.
+      Do not repeat what the user said back to them.
+      Do not ask more than one question per reply.
+
+    tutor: |
+      [SYSTEM CONTEXT]
+      You are a patient academic tutor.
+      {vision_context}
+
+      Explain clearly, use examples, and encourage the student.
+      Keep replies focused: one concept at a time.
+
+    support: |
+      [SYSTEM CONTEXT]
+      You are a calm, professional customer-service agent.
+      {vision_context}
+
+      Be polite, solution-focused, and concise.
+      Acknowledge the issue before offering a solution.
+
+    advisor: |
+      [SYSTEM CONTEXT]
+      You are a career advisor helping students plan their next steps.
+      {vision_context}
+
+      Be practical and specific. Suggest concrete actions.
+      Avoid vague encouragement — give real next steps.
+
+    # ── NAMED ENTITY RECOGNITION ────────────────────────────────────
+    # Disable: categories.enabled: false
+    #          sentiment.enabled: false
+    #          scale.enabled: false
+    #          scoring.enabled: false
+    ner_extractor: |
+      [SYSTEM CONTEXT]
+      You are a Named Entity Recognition engine.
+      {vision_context}
+
+      TASK: Extract all named entities from the user's text.
+
+      OUTPUT: Return ONLY a valid JSON object with exactly these keys:
+        "person"   — list of person names        ([] if none)
+        "location" — list of place/location names ([] if none)
+        "date"     — list of date expressions     ([] if none)
+        "time"     — list of time expressions     ([] if none)
+
+      RULES:
+      - Output the JSON object only. No introduction, no explanation, no markdown.
+      - If a category has no entities, use an empty list [].
+      - Normalise dates to YYYY-MM-DD where possible; keep original form otherwise.
+      - Do NOT invent entities that are not explicitly in the text.
+
+    # ── TEXT CLASSIFICATION ─────────────────────────────────────────
+    # Disable: categories.enabled: false
+    # The classify/multilabel prompts select the label;
+    # this persona sets the engine's role and constraints.
+    text_classifier: |
+      [SYSTEM CONTEXT]
+      You are a precision text classification engine.
+      {vision_context}
+
+      TASK: Assign the user's message to exactly one category from the list provided.
+
+      OUTPUT: The category label only — one word or short phrase, no punctuation around it.
+
+      RULES:
+      - Choose the label that best captures the PRIMARY subject.
+      - If multiple categories apply, pick the most dominant one.
+      - Never explain your choice. Never add anything outside the label.
+
+    # ── INTENT DETECTION ────────────────────────────────────────────
+    # Disable: categories.enabled: false
+    # Intent = the user's GOAL or desired ACTION, not just the topic.
+    # "My laptop broke" topic=TECHNICAL, intent=request_help.
+    intent_detector: |
+      [SYSTEM CONTEXT]
+      You are an intent detection system.
+      {vision_context}
+
+      TASK: Identify the PRIMARY intent — the user's core goal or desired action —
+      from the message below.
+
+      OUTPUT: One intent label from the provided list. Nothing else.
+
+      RULES:
+      - Focus on what the user wants to DO or ACHIEVE, not what they mention.
+      - If the user is venting (no clear request), label it: express_distress.
+      - Never explain. Never add context. One label only.
+
+    # ── MACHINE TRANSLATION ─────────────────────────────────────────
+    # Disable: sentiment.enabled: false
+    #          scale.enabled: false
+    #          categories.enabled: false
+    #          scoring.enabled: false
+    # Use translate prompt: build_prompt("translate", source_lang="English",
+    #                                    target_lang="Spanish", text="...")
+    translator: |
+      [SYSTEM CONTEXT]
+      You are a professional bilingual translator.
+      {vision_context}
+
+      TASK: Translate the user's text between the specified languages.
+
+      OUTPUT: The translated text only. No original, no explanation, no label.
+
+      RULES:
+      - Preserve the original meaning, tone, and register exactly.
+      - Adapt idioms to natural equivalents in the target language.
+      - Formal source → formal translation. Casual source → casual translation.
+      - Do not add, remove, or summarise any content.
+
+    # ── QUESTION ANSWERING ──────────────────────────────────────────
+    # Disable: sentiment.enabled: false
+    #          scale.enabled: false
+    #          categories.enabled: false
+    # Use qa prompt: build_prompt("qa", context="...", text="<question>")
+    qa_engine: |
+      [SYSTEM CONTEXT]
+      You are a closed-book question-answering system.
+      {vision_context}
+
+      TASK: Answer the user's question using ONLY the provided context.
+
+      RULES:
+      - If the answer is in the context: quote the key part, then give a direct answer.
+      - If the answer is NOT in the context: reply exactly —
+          "Not found in the provided context."
+      - No speculation. No outside knowledge. No apologies. No padding.
+      - Be direct: answer first, brief explanation if necessary.
+
+    # ── TEXT GENERATION / NLG / SURFACE REALISATION ─────────────────
+    # Disable ALL deterministic stages:
+    #   sentiment.enabled: false   scale.enabled: false
+    #   categories.enabled: false  responses.enabled: false
+    #   scoring.enabled: false
+    # Surface Realisation = choosing the exact words, grammar, and tone
+    # to express a given meaning — the final step in dialogue systems.
+    generator: |
+      [SYSTEM CONTEXT]
+      You are a fluent natural language generation engine.
+      {vision_context}
+
+      TASK: Complete, continue, or generate the text as instructed by the user.
+
+      RULES:
+      - Match the tone, register, and style of the input exactly.
+      - Be natural and fluent — avoid robotic or formulaic phrasing.
+      - Do not add unsolicited commentary, disclaimers, or meta-text.
+      - Output only the generated content.
 
   context_window: 0   # 0 = send full history every turn
                       # N = send only last N turns (use ~6 for sessions > 15 turns)
@@ -71,7 +283,12 @@ llm:
     multilabel: "From these labels: {labels}, list ALL that apply.\nReply with ONLY a comma-separated list of labels, nothing else.\nMessage: {text}\nLabels:"
     score:      "Rate the {criterion} of this message on a scale from {lo} to {hi}.\nReply with ONLY a number, nothing else.\nMessage: {text}\nNumber:"
     extract:    "Extract these fields and reply with ONLY a valid JSON object using exactly these keys: {fields}.\nMessage: {text}\nJSON:"
-    respond:    "{persona}\nContext — emotional tier: {tier}, support category: {category}.\nRespond to the following message in 1-3 empathetic sentences:\n{text}"
+    # respond: persona owns the full system context (role + task + format + constraints).
+    # This template is now a thin passthrough — just the user's text.
+    # {tier} and {category} are REMOVED: they were injected even when those features
+    # were disabled, adding noise ("tier: UNKNOWN, category: GENERAL") to the prompt.
+    # The persona sets all the framing; respond just delivers the message.
+    respond:    "{text}"
     summarize:  "Summarize the conversation below in about {max_words} words for {audience}.\nConversation:\n{conversation}\nSummary:"
 
 
@@ -304,12 +521,24 @@ categories:
       [enrolment, certificate, transcript, registration, form, office,
        register, deadline, withdrawal, deferral, appeal, HR, document]
 
-  # ── Template for a new category ──────────────────────────────────
+  # ── Catch-all GENERAL category ───────────────────────────────────
+  # response_priority: 0 → only wins when NOTHING else matches.
+  # Prevents "all_detected: []" on vague openers ("Hi, I need help").
+  # The output looks like primary=GENERAL, all_detected=['GENERAL'] instead
+  # of primary=GENERAL, all_detected=[] — visually cleaner in exam output.
+  GENERAL:
+    escalation_target: false
+    response_priority: 0      # lowest possible — always loses to any specific category
+    keywords:
+      [help, please, need, support, okay, hi, hello, hey, issue,
+       problem, situation, something, anything, wondering, question]
+
+  # ── Template for a new domain category ──────────────────────────
   # MEDICAL:
   #   escalation_target: true
   #   response_priority: 4
   #   keywords:
-  #     [hospital, doctor, prescription, sick, injury, medication, mental health]
+  #     [hospital, doctor, prescription, sick, injury, medication]
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -512,6 +741,71 @@ vision:
   flip_webcam: true       # true = mirror selfie view (natural feel)
   wait_key_ms: 1          # cv2.waitKey delay ms in the live loop (1 = responsive)
 
+  # ── Backend selection ────────────────────────────────────────────
+  # "auto"       → mediapipe (if installed) > dnn/yunet > lbp/opencv
+  # "mediapipe"  → force MediaPipe (must be installed: pip install mediapipe)
+  # "dnn"        → force YuNet + FER DNN models (models/ folder must exist)
+  # "opencv"     → force LBP cascades (always available, no downloads)
+  backend: "auto"
+
+  # ── Performance: frame-skip + downscale ─────────────────────────
+  # Run full detection every N frames; reuse the result in between.
+  # 1 = detect every frame (slowest, max accuracy)
+  # 3 = detect every 3rd frame (recommended, ~3× FPS boost)
+  detect_every_n: 3
+
+  # Scale frame DOWN to this fraction for detection, then scale results back.
+  # 0.5 = half resolution detection (2× faster, minimal accuracy loss)
+  # 1.0 = full resolution (no downscale)
+  detect_scale: 0.5
+
+  # ── MediaPipe settings (reference guide section 1) ──────────────
+  # All 0.7 per reference: prevents false positives + reduces jitter
+  mediapipe:
+    max_faces: 2
+    max_hands: 2
+    min_detection_confidence: 0.7   # 0.7 confident → prevents false positives in poor lighting
+    min_tracking_confidence:  0.7   # 0.7 confident → reduces landmark jitter
+
+  # ── YuNet DNN face detector ──────────────────────────────────────
+  yunet:
+    confidence: 0.6
+
+  # ── Blink / drowsiness thresholds (reference guide section 2) ───
+  blink:
+    enabled: true
+    eyes_closed_frames: 2          # cascade path: consecutive no-eye frames = closed
+    ear_closed_threshold: 0.25     # MediaPipe EAR < 0.25 → eye closed  (reference: confident)
+                                   # ear >= 0.25 → open / blink end
+  
+  # ── Drowsiness alert ────────────────────────────────────────────
+  drowsy:
+    enabled: true
+    closed_frames_alert: 20        # EAR < 0.25 for 20 frames → "Drowsy"  (~0.6s @ 30fps)
+    awake_recovery_frames: 5       # EAR >= 0.25 for 5 frames before drowsy resets
+                                   # prevents micro-opens from resetting the alert instantly
+    alert_message: "DROWSY! Wake up!"
+
+  # ── Lip reading / vowel classification (reference guide section 3)
+  # classifier: "simple" (fast threshold logic) | "fuzzy" (Gaussian profiles, highest accuracy)
+  lip:
+    classifier: "fuzzy"            # "simple" or "fuzzy"
+    mar_threshold_a: 0.50          # A:  MAR > 0.50  (jaw dropped fully)
+    mar_threshold_e: 0.22          # E:  MAR > 0.22 AND width > 0.42
+    mar_threshold_i: 0.22          # I:  MAR < 0.22 AND width > 0.42
+    width_ratio_wide: 0.42         # E/I: lips stretched wide horizontally
+    width_ratio_round: 0.38        # O/U: lips puckered (width < 0.38)
+    smile_width_threshold: 0.35    # corner_lift > 0.35 → smiling
+    confidence_floor: 0.42         # below this fuzzy confidence → output "?"
+
+  # ── Temporal smoothing (reference guide section 6) ───────────────
+  smoothing:
+    ema_alpha: 0.35                # EMA alpha: moderate smoothing for EAR / MAR values
+    gesture_history: 12            # majority-vote window for gesture stabilisation
+    vowel_history: 12              # majority-vote window for vowel stabilisation
+    kalman_process_noise: 0.001    # Q = 1e-3 (allows smooth continuous movement)
+    kalman_measure_noise: 0.1      # R = 1e-1 (trusts MP measurement but damps micro-jitter)
+
   # ── Haar cascade filenames ──────────────────────────────────────
   # These XML files ship inside opencv-python (offline, no download needed).
   # Verify location: python -c "import cv2,os; print(os.listdir(cv2.data.haarcascades))"
@@ -528,42 +822,45 @@ vision:
   face_detect:
     enabled: true
 
-  # ── Blink counter ───────────────────────────────────────────────
-  blink:
-    enabled: true
-    eyes_closed_frames: 2   # consecutive frames with no eyes detected = "closed"
-                             # increase to 3-4 if getting false blink counts
-
-  # ── Drowsiness alert ────────────────────────────────────────────
-  drowsy:
-    enabled: true
-    closed_frames_alert: 20   # eyes absent this many frames → DROWSY warning
-    alert_message: "DROWSY! Eyes open!"
-
-  # ── Head-pose zone (Left / Right / Up / Down / Center) ──────────
+  # ── Head-pose zone (Left / Right / Up / Down / Forward) ─────────
   head_pose:
     enabled: true
-    deadzone_ratio: 0.15   # fraction of frame treated as "Center" before calling a direction
+    deadzone_ratio: 0.15   # fraction of frame treated as "Forward" (bbox-based fallback)
+
+  head_zones:
+    # Landmark-based Up/Down thresholds (MediaPipe path).
+    # Measure = (nose_y - eye_mid_y) / face_height
+    # In a neutral forward pose this ratio is ~0.28-0.35.
+    # Decrease up_ratio to require more tilt before "Up" fires.
+    # Increase down_ratio to require more tilt before "Down" fires.
+    up_ratio:   0.20   # ratio < this → "Up"   (nose close to eyes)
+    down_ratio: 0.42   # ratio > this → "Down" (nose far below eyes)
 
   # ── Smile-mood (Smiling / Neutral) ──────────────────────────────
   smile_mood:
     enabled: true
 
-  # ── Hand gesture (skin mask + convex hull → finger count → gesture name) ──
+  # ── Hand gesture (reference guide section 4) ───────────────────
+  # MediaPipe path: 21 landmarks, thumb handedness-aware, special gestures
+  # OpenCV path:   skin-mask + convex hull (fallback, lighting-sensitive)
   gesture:
     enabled: true
-    skin_ycrcb:               # YCrCb skin-colour range — tune for your lighting
-      lower: [0, 133, 77]     # increase Cr lower bound if too much background detected
+    hold_seconds: 1.0         # gesture must be held this long to commit  (reference: 1.0s)
+    high_five_y_ratio: 1.6    # High Five: wrist.y < screen_height / 1.6  (hand raised high)
+    skin_ycrcb:               # YCrCb skin mask (OpenCV fallback path only)
+      lower: [0, 133, 77]
       upper: [255, 173, 127]
-    min_contour_area: 5000    # ignore blobs smaller than this (px²); increase to reduce noise
-    gesture_map:              # finger count (string key) → [name, emoji]
-                              # to add: "6": ["Six","6️⃣"]  (rare but possible)
+    min_contour_area: 5000
+    gesture_map:              # finger count → [name, emoji]  (add rows freely)
       "0": ["Fist",      "✊"]
       "1": ["One",       "☝️"]
       "2": ["Peace",     "✌️"]
       "3": ["Three",     "3️⃣"]
       "4": ["Four",      "4️⃣"]
       "5": ["Open Hand", "🖐"]
+      # Special gestures (detected by geometry, not just count):
+      # "Thumbs Up" → fingers==1 AND thumb_tip.y < thumb_ip.y AND index_tip.y > index_pip.y
+      # "High Five"  → fingers==5 AND wrist.y < screen_height / 1.6
 
   # ── Colour tracker ──────────────────────────────────────────────
   color_track:
@@ -713,17 +1010,37 @@ stages:
 
   - name: context_inject
     type: context_injector
-    enabled: true              # enabled per-tab when vision is on
-    method: context             # context | score | primary | annotate
+    # SELF-DISABLING BEHAVIOUR:
+    # The stage reads LIVE.vision.snapshot(). If the camera is not running
+    # or the last frame is stale (> 2s old), it returns {injected: false}
+    # and the pipeline continues unchanged — no vision context is added.
+    # When the camera IS running, vision labels are prepended to the LLM
+    # prompt so llama3 "sees" what the webcam detects:
+    #   "[Vision] Face: True, Mood: happy, Gesture: Peace, Head: Forward"
+    # This is the ONLY way vision reaches llama3 (which is text-only).
+    enabled: true
+    method: context             # context  → append label string to LLM prompt
+                                # score    → add vision signals to sentiment compound score
+                                # primary  → vision IS the text (camera-only mode)
+                                # annotate → log only, invisible to LLM
     fallback:
       on: failure
       value: {injected: false}
     config:
       score_weights:            # used when method: score
-        smiling:        0.30
+        # Keys must match the exact mood strings returned by mood_of():
+        # happy, neutral, sad, angry, surprised, sleepy, no_face
+        # and gesture strings from classify_gesture(): Peace, Fist, etc.
+        happy:          0.30
         neutral:        0.00
+        surprised:      0.10
+        sad:           -0.25
+        angry:         -0.30
+        sleepy:        -0.20
         no_face:       -0.10
-        drowsy:        -0.40
+        # gesture-based modifiers:
+        "Thumbs Up":    0.20
+        "Fist":        -0.15
 
   # ── ANALYSIS STAGES ───────────────────────────────────────────────
   # INTERDEPENDENCY: sentiment → scale (score flows down)
@@ -852,10 +1169,10 @@ tabs:
       - tts
       - log
     overrides:
-      stt:          {enabled: false}
-      vision_input: {enabled: false}
-      context_inject: {enabled: false}
-      tts:          {enabled: false}    # set true to speak chat responses aloud
+      stt:             {enabled: false}
+      vision_input:    {enabled: false}
+      context_inject:  {enabled: true}   # vision labels → LLM prompt; no-op when camera is off
+      tts:             {enabled: false}  # set true to speak chat responses aloud
 
   # ── 🎙️ VOICE TAB ──────────────────────────────────────────────────
   # Mic in → STT → pipeline. TTS on (speaks the response back).
@@ -876,10 +1193,10 @@ tabs:
       - tts
       - log
     overrides:
-      text_input:    {enabled: false}
-      vision_input:  {enabled: false}
-      context_inject: {enabled: false}
-      tts:           {enabled: true}   # voice tab speaks responses
+      text_input:      {enabled: false}
+      vision_input:    {enabled: false}
+      context_inject:  {enabled: true}   # vision labels → LLM prompt; no-op when camera is off
+      tts:             {enabled: true}   # voice tab speaks responses
 
   # ── 📷 VISION TAB ─────────────────────────────────────────────────
   # Camera is the input. Vision context string becomes the text.
