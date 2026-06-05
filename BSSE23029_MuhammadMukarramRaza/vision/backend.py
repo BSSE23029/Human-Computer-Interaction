@@ -37,10 +37,20 @@ def fer_path() -> str | None:
 
 @lru_cache(maxsize=1)
 def mediapipe_available() -> bool:
+    """
+    Check whether mediapipe is importable.
+
+    On Apple Silicon, mediapipe bundles its own libopencv which conflicts with
+    our cv2 at the Objective-C class registration level. Importing cv2 FIRST
+    (so it wins the class registration) prevents the conflict and lets the
+    mediapipe import succeed. We also catch all exceptions, not just ImportError,
+    because the conflict can surface as OSError / RuntimeError on the first load.
+    """
     try:
-        import mediapipe  # noqa: F401
+        import cv2          # force cv2 to load first → wins objc class registration
+        import mediapipe    # noqa: F401
         return True
-    except ImportError:
+    except Exception:       # catches ImportError, OSError, RuntimeError from lib conflict
         return False
 
 
@@ -106,10 +116,19 @@ def reset_backend_cache():
     fer_available.cache_clear()
 
 
-# ── convenience alias used by every vision module ─────────────────────────────
-# Import this: from vision.backend import BACKEND
-# Use it:      if BACKEND == "mediapipe": ...
-BACKEND: str = resolve_backend()
+# ── module-level BACKEND constant ─────────────────────────────────────────────
+# On Apple Silicon, mediapipe import can fail at first try (objc class conflict)
+# but succeed after cv2 is loaded. We clear the cache and re-resolve once so
+# that the stale "dnn" result from a failed first attempt is corrected.
+reset_backend_cache()           # clear any stale first-import cache result
+BACKEND: str = resolve_backend() # re-resolve with cv2 already in sys.modules
+
+# If auto-resolution still picked dnn but mediapipe is actually available
+# (can happen when mediapipe import is a no-op on retry), force a final check.
+if BACKEND != "mediapipe" and get("vision.backend", "auto") == "auto":
+    if mediapipe_available():
+        resolve_backend.cache_clear()
+        BACKEND = resolve_backend()
 
 
 # ── LBP cascade helper ────────────────────────────────────────────────────────

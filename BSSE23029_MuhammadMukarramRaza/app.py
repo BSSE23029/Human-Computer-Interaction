@@ -239,6 +239,28 @@ def _vision_worker():
                 for fl in _det["face_landmarks"]:
                     draw_face_mesh(frame, fl, h, w)
 
+            # ── VOWEL CHIP near mouth ─────────────────────────────────
+            # Requires face_landmarks for mouth position only.
+            # Always drawn when lip enabled + face visible; not gated on vowel value.
+            if (BACKEND == "mediapipe"
+                    and get("vision.lip.enabled", True)
+                    and _det["face_landmarks"]):
+                vowel_now = _det.get("vowel", "?")
+                vconf_now = _det.get("vowel_conf", 0.0)
+                try:
+                    fl0  = _det["face_landmarks"][0].landmark
+                    mx   = int((fl0[61].x + fl0[291].x) / 2 * w)
+                    my   = int(max(fl0[13].y, fl0[14].y) * h) + 28
+                    if vowel_now in {"A", "E", "I", "O", "U"}:
+                        chip_col  = _AMBER
+                        label_str = f"{vowel_now}  {vconf_now:.2f}"
+                    else:
+                        chip_col  = (160, 160, 160)   # lighter grey — visible
+                        label_str = f"lip: {vowel_now}"
+                    draw_chip(frame, label_str, (mx - 28, my), chip_col, scale=0.65)
+                except Exception:
+                    pass
+
             # ── FACE BOXES (corner brackets only, elegant) ───────────
             m_col = mood_color(_det["mood"])
             for box in _det["face_boxes"]:
@@ -274,11 +296,15 @@ def _vision_worker():
             slots.append((f"Blinks: {_blink_state['blinks']}", _CYAN))
             if _blink_state.get("drowsy") or _det.get("is_drowsy"):
                 slots.append(("⚠ DROWSY", _RED))
-            # vowel — only show when confident (not "?" or "neutral"/"smile")
+            # vowel — show whenever MediaPipe + lip.enabled, no face_landmarks gate
+            # face_landmarks can be [] on a skipped frame; vowel value persists in _det
             vowel = _det.get("vowel", "?")
             vconf = _det.get("vowel_conf", 0.0)
-            if BACKEND == "mediapipe" and vowel in "AEIOU" and vconf > 0:
-                slots.append((f"Vowel: {vowel} ({vconf:.2f})", _AMBER))
+            if BACKEND == "mediapipe" and get("vision.lip.enabled", True):
+                if vowel in {"A", "E", "I", "O", "U"}:
+                    slots.append((f"Vowel: {vowel}  {vconf:.2f}", _AMBER))
+                else:
+                    slots.append((f"Vowel: {vowel}", (160, 160, 160)))
             if raw_gest != "none":
                 if len(hands) > 1:
                     slots.append((" | ".join(
@@ -469,6 +495,217 @@ def reset_handler():
     return [], _ollama_status(), _session_info()
 
 
+def _annotate_single_frame(frame_bgr):
+    """
+    Run all enabled vision detectors on a single BGR frame, draw the
+    full HUD overlay (face mesh, hand mesh, vowel chip, status bar),
+    and return (annotated_rgb, label_dict).
+
+    Used by both the image-upload and video-upload handlers so they
+    produce the same quality output as the live camera feed.
+    """
+    import cv2
+    from collections import Counter
+    from vision.backend import BACKEND
+    from vision.faces import (detect_faces, mood_of, head_zone,
+                               head_zone_landmarks, get_face_landmarks,
+                               make_blink_processor)
+    from vision.hands import count_all_hands
+    from vision.lips import LipAnalyser
+    from vision.draw import (draw_face_mesh, draw_face_box, draw_chip,
+                              draw_status_bar, draw_ear_gauge, draw_corner_badge,
+                              hud_color, mood_color,
+                              _CYAN, _WHITE, _GREEN, _RED, _AMBER)
+
+    h_cfg = int(get("vision.display.height", 480))
+    w_cfg = int(get("vision.display.width",  640))
+    frame = cv2.resize(frame_bgr, (w_cfg, h_cfg))
+
+    # detections
+    face_boxes = detect_faces(frame) if get("vision.face_detect.enabled", True) else []
+    face_lms   = get_face_landmarks(frame)
+
+    mood_val = mood_of(frame) if face_boxes else "no_face"
+    zone     = "Forward"
+    if face_boxes:
+        if face_lms:
+            zone = head_zone_landmarks(face_lms[0].landmark, w_cfg, h_cfg)
+        else:
+            zone = head_zone(face_boxes[0], frame.shape)
+
+    hands = count_all_hands(frame) if get("vision.gesture.enabled", True) else []
+
+    # lip analysis
+    vowel, vconf = "?", 0.0
+    if BACKEND == "mediapipe" and face_lms and get("vision.lip.enabled", True):
+        try:
+            _la = LipAnalyser()
+            vowel = _la.update(face_lms[0].landmark, w_cfg, h_cfg)
+            vconf = round(_la.last_confidence, 2)
+        except Exception:
+            pass
+
+    # draw meshes
+    if face_lms:
+        for fl in face_lms:
+            draw_face_mesh(frame, fl, h_cfg, w_cfg)
+
+    m_col = mood_color(mood_val)
+    for box in face_boxes:
+        draw_face_box(frame, box, m_col)
+
+    # vowel chip near mouth
+    if BACKEND == "mediapipe" and face_lms and get("vision.lip.enabled", True):
+        try:
+            fl0 = face_lms[0].landmark
+            mx  = int((fl0[61].x + fl0[291].x) / 2 * w_cfg)
+            my  = int(max(fl0[13].y, fl0[14].y) * h_cfg) + 28
+            chip_col  = _AMBER if vowel in {"A","E","I","O","U"} else (160,160,160)
+            label_str = f"{vowel}  {vconf:.2f}" if vowel in {"A","E","I","O","U"} else f"lip: {vowel}"
+            draw_chip(frame, label_str, (mx - 28, my), chip_col, scale=0.65)
+        except Exception:
+            pass
+
+    # status bar
+    raw_gest = hands[0].get("gesture","none") if hands else "none"
+    g_emoji  = hands[0].get("emoji","")       if hands else ""
+    zone_col = _CYAN if zone in ("Forward","Center") else _AMBER
+    slots = []
+    if mood_val != "no_face":     slots.append((f"Mood: {mood_val}", m_col))
+    if zone != "Forward":         slots.append((f"Head: {zone}", zone_col))
+    if raw_gest != "none":        slots.append((f"{raw_gest} {g_emoji}".strip(), _WHITE))
+    if vowel in {"A","E","I","O","U"}: slots.append((f"Vowel: {vowel} {vconf:.2f}", _AMBER))
+    else:                         slots.append((f"Vowel: {vowel}", (160,160,160)))
+    draw_corner_badge(frame, BACKEND, "tr")
+    draw_status_bar(frame, slots)
+
+    label = {
+        "present":   bool(face_boxes),
+        "faces":     len(face_boxes),
+        "mood":      mood_val,
+        "head_zone": zone,
+        "gesture":   raw_gest,
+        "vowel":     vowel,
+        "fingers":   hands[0].get("fingers",0) if hands else 0,
+        "blinks":    0,
+        "is_drowsy": False,
+        "backend":   BACKEND,
+    }
+    return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), label
+
+
+def _image_upload_handler(image_np):
+    """Process an uploaded image through the full vision annotator."""
+    import cv2
+    if image_np is None:
+        return None, "_Upload an image to analyse it._"
+    frame_bgr = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
+    annotated_rgb, label = _annotate_single_frame(frame_bgr)
+    from vision.bridge import vision_context_string
+    return annotated_rgb, f"**{vision_context_string(label)}**\n\n" + \
+        "\n".join(f"| `{k}` | {v} |" for k, v in label.items()
+                  if not str(k).startswith("_"))
+
+
+def _image_send_to_pipeline_handler(image_np, history):
+    """Annotate an uploaded image and send the vision context through the pipeline."""
+    import cv2
+    over, history = _guard_session_over(history)
+    if over:
+        return None, history, "Session complete.", "", _session_info()
+    if image_np is None:
+        return None, history, "Upload an image first.", "", _session_info()
+
+    frame_bgr = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
+    annotated_rgb, label = _annotate_single_frame(frame_bgr)
+
+    # temporarily inject into LIVE so context_inject stage picks it up
+    import time
+    LIVE.vision.running      = True
+    LIVE.vision.last_updated = time.time()
+    LIVE.vision.label        = label
+
+    ctx = run_turn("vision")
+
+    LIVE.vision.running = False   # image is static, stop the "running" flag
+
+    history = history + [
+        {"role": "user",      "content": f"🖼️ {ctx.get('text', '')}"},
+        {"role": "assistant", "content": ctx.get("response", "") + _make_meta(ctx)},
+    ]
+    return annotated_rgb, history, "Image sent to pipeline.", \
+           _auto_report_if_done(), _session_info()
+
+
+def _video_upload_handler(video_path):
+    """
+    Sample frames from an uploaded video and annotate the middle frame.
+    Returns (annotated_middle_frame, labels_markdown, sampled_frames_count).
+    """
+    import cv2
+    if video_path is None:
+        return None, "_Upload a video to analyse it._", ""
+
+    cap = cv2.VideoCapture(video_path)
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps   = cap.get(cv2.CAP_PROP_FPS) or 30.0
+
+    if total == 0:
+        cap.release()
+        return None, "Could not read video.", ""
+
+    # jump to middle frame
+    mid = max(0, total // 2)
+    cap.set(cv2.CAP_PROP_POS_FRAMES, mid)
+    ok, frame = cap.read()
+    cap.release()
+
+    if not ok or frame is None:
+        return None, "Could not extract frame.", ""
+
+    annotated_rgb, label = _annotate_single_frame(frame)
+    from vision.bridge import vision_context_string
+    info = (f"Frame {mid}/{total} · {total/fps:.1f}s video · {fps:.0f}fps\n\n"
+            f"**{vision_context_string(label)}**\n\n"
+            + "\n".join(f"| `{k}` | {v} |" for k, v in label.items()
+                        if not str(k).startswith("_")))
+    return annotated_rgb, info, f"Frame {mid}/{total}"
+
+
+def _video_send_to_pipeline_handler(video_path, history):
+    """Analyse video middle frame and send through the pipeline."""
+    import cv2, time
+    over, history = _guard_session_over(history)
+    if over:
+        return None, history, "Session complete.", "", _session_info()
+    if video_path is None:
+        return None, history, "Upload a video first.", "", _session_info()
+
+    cap   = cv2.VideoCapture(video_path)
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, total // 2))
+    ok, frame = cap.read()
+    cap.release()
+
+    if not ok:
+        return None, history, "Could not read video frame.", "", _session_info()
+
+    annotated_rgb, label = _annotate_single_frame(frame)
+    LIVE.vision.running      = True
+    LIVE.vision.last_updated = time.time()
+    LIVE.vision.label        = label
+
+    ctx = run_turn("vision")
+    LIVE.vision.running = False
+
+    history = history + [
+        {"role": "user",      "content": f"📹 {ctx.get('text', '')}"},
+        {"role": "assistant", "content": ctx.get("response", "") + _make_meta(ctx)},
+    ]
+    return annotated_rgb, history, "Video frame sent to pipeline.", \
+           _auto_report_if_done(), _session_info()
+
+
 def vision_labels_handler():
     label = LIVE.vision_snapshot()
     if label.get("_stale") or not label.get("present"):
@@ -582,46 +819,105 @@ def build_app():
         if _tab_enabled("vision"):
             with gr.Tab(get("tabs.vision.label", "📷 Vision")):
                 vis_report = gr.Markdown()
-                with gr.Row():
-                    with gr.Column(scale=2):
-                        live_feed = gr.Image(
-                            label="Live annotated feed",
-                            height=int(get("vision.display.height", 480)))
-                    with gr.Column(scale=1):
-                        vis_labels = gr.Markdown("_Labels appear here_")
-                        gr.Button("🔄 Refresh labels").click(
-                            vision_labels_handler, None, vis_labels)
-                        gr.Button("📤 Send frame to pipeline",
-                                  variant="primary").click(
-                            vision_send_handler, [chatbot],
-                            [chatbot, vis_labels, vis_report, sess_info])
-                with gr.Row():
-                    gr.Button("▶ Start camera", variant="primary").click(
-                        fn=_vision_stream, inputs=None, outputs=live_feed)
-                    gr.Button("⏹ Stop camera").click(_stop_vision, None, None)
+                _h = int(get("vision.display.height", 480))
 
-                gr.Markdown(
-                    "**Standalone windows** (run in a separate terminal):  \n"
-                    "```\n"
-                    "# Face modalities\n"
-                    "python -c \"from vision.faces import run_blink;     run_blink()\"\n"
-                    "python -c \"from vision.faces import run_drowsy;    run_drowsy()\"\n"
-                    "python -c \"from vision.faces import run_mood;      run_mood()\"\n"
-                    "python -c \"from vision.faces import run_head_pose; run_head_pose()\"\n"
-                    "python -c \"from vision.faces import run_all_face;  run_all_face()\"\n"
-                    "\n"
-                    "# Hand modalities\n"
-                    "python -c \"from vision.hands import run_gesture;      run_gesture()\"\n"
-                    "python -c \"from vision.hands import run_finger_count; run_finger_count()\"\n"
-                    "\n"
-                    "# Lip / vowel reading  (MediaPipe required)\n"
-                    "python -c \"from vision.lips import run_lips; run_lips()\"\n"
-                    "\n"
-                    "# Color tracking & motion\n"
-                    "python -c \"from vision.color_motion import run_color;  run_color('red')\"\n"
-                    "python -c \"from vision.color_motion import run_motion; run_motion()\"\n"
-                    "```"
-                )
+                # ── three input source sub-tabs ───────────────────
+                with gr.Tabs():
+
+                    # ── 🎥 Live Camera ────────────────────────────
+                    with gr.Tab("🎥 Live Camera"):
+                        with gr.Row():
+                            with gr.Column(scale=2):
+                                live_feed = gr.Image(
+                                    label="Live annotated feed", height=_h)
+                            with gr.Column(scale=1):
+                                vis_labels = gr.Markdown("_Labels appear here_")
+                                gr.Button("🔄 Refresh labels").click(
+                                    vision_labels_handler, None, vis_labels)
+                                gr.Button("📤 Send to pipeline",
+                                          variant="primary").click(
+                                    vision_send_handler, [chatbot],
+                                    [chatbot, vis_labels, vis_report, sess_info])
+                        with gr.Row():
+                            gr.Button("▶ Start camera",
+                                      variant="primary").click(
+                                fn=_vision_stream, inputs=None,
+                                outputs=live_feed)
+                            gr.Button("⏹ Stop camera").click(
+                                _stop_vision, None, None)
+
+                    # ── 🖼️ Upload Image ───────────────────────────
+                    with gr.Tab("🖼️ Upload Image"):
+                        gr.Markdown("Upload any image — the full vision pipeline "
+                                    "(face mesh, gestures, mood, vowel) runs on it.")
+                        with gr.Row():
+                            with gr.Column(scale=2):
+                                img_input    = gr.Image(
+                                    sources=["upload"],
+                                    type="numpy",
+                                    label="Upload image",
+                                    height=_h)
+                                img_output   = gr.Image(
+                                    label="Annotated output",
+                                    height=_h,
+                                    interactive=False)
+                            with gr.Column(scale=1):
+                                img_labels   = gr.Markdown("_Upload an image_")
+                                gr.Button("🔍 Analyse",
+                                          variant="primary").click(
+                                    _image_upload_handler,
+                                    [img_input],
+                                    [img_output, img_labels])
+                                gr.Button("📤 Send to pipeline").click(
+                                    _image_send_to_pipeline_handler,
+                                    [img_input, chatbot],
+                                    [img_output, chatbot, img_labels,
+                                     vis_report, sess_info])
+
+                    # ── 📹 Upload Video ───────────────────────────
+                    with gr.Tab("📹 Upload Video"):
+                        gr.Markdown("Upload a video — the middle frame is extracted, "
+                                    "annotated, and optionally sent to the pipeline.")
+                        with gr.Row():
+                            with gr.Column(scale=2):
+                                vid_input    = gr.Video(
+                                    sources=["upload"],
+                                    label="Upload video",
+                                    height=_h)
+                                vid_output   = gr.Image(
+                                    label="Annotated middle frame",
+                                    height=_h,
+                                    interactive=False)
+                            with gr.Column(scale=1):
+                                vid_info     = gr.Markdown("_Upload a video_")
+                                vid_frame_lbl= gr.Markdown()
+                                gr.Button("🔍 Analyse middle frame",
+                                          variant="primary").click(
+                                    _video_upload_handler,
+                                    [vid_input],
+                                    [vid_output, vid_info, vid_frame_lbl])
+                                gr.Button("📤 Send frame to pipeline").click(
+                                    _video_send_to_pipeline_handler,
+                                    [vid_input, chatbot],
+                                    [vid_output, chatbot, vid_info,
+                                     vis_report, sess_info])
+
+                # ── standalone windows hint ───────────────────────
+                with gr.Accordion("Standalone vision windows", open=False):
+                    gr.Markdown(
+                        "Run in a separate terminal (ESC to exit each window):\n"
+                        "```bash\n"
+                        "python -c \"from vision.faces import run_blink;     run_blink()\"\n"
+                        "python -c \"from vision.faces import run_drowsy;    run_drowsy()\"\n"
+                        "python -c \"from vision.faces import run_mood;      run_mood()\"\n"
+                        "python -c \"from vision.faces import run_head_pose; run_head_pose()\"\n"
+                        "python -c \"from vision.faces import run_all_face;  run_all_face()\"\n"
+                        "python -c \"from vision.hands import run_gesture;   run_gesture()\"\n"
+                        "python -c \"from vision.lips  import run_lips;      run_lips()\"\n"
+                        "python -c \"from vision.color_motion import run_color;  run_color('red')\"\n"
+                        "python -c \"from vision.color_motion import run_motion; run_motion()\"\n"
+                        "```"
+                    )
 
         # ── 📋 Report tab ──────────────────────────────────────────
         if _tab_enabled("report"):
